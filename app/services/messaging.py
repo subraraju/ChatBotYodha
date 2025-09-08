@@ -167,6 +167,87 @@ Thank you for contacting Contoso! 🚀"""
         return self.send_whatsapp_notification(recipient_phone, message_text)
 
 
+class TelegramService:
+    """Service for sending Telegram notifications"""
+    
+    def __init__(self):
+        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.is_configured = bool(self.bot_token)
+        
+        if self.is_configured:
+            try:
+                import telegram
+                self.bot = telegram.Bot(token=self.bot_token)
+            except ImportError:
+                print("⚠️ python-telegram-bot not installed. Run: pip install python-telegram-bot==20.7")
+                self.is_configured = False
+            except Exception as e:
+                print(f"⚠️ Telegram bot initialization failed: {e}")
+                self.is_configured = False
+        else:
+            print("⚠️ Telegram service not configured - missing TELEGRAM_BOT_TOKEN")
+    
+    async def send_message(self, chat_id: str, message: str, parse_mode: str = "Markdown"):
+        """Send a message to Telegram chat"""
+        if not self.is_configured:
+            raise ValueError("Telegram service not configured")
+        
+        try:
+            await self.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode=parse_mode
+            )
+            return True
+        except Exception as e:
+            print(f"❌ Error sending Telegram message: {e}")
+            return False
+    
+    def send_message_sync(self, chat_id: str, message: str):
+        """Synchronous wrapper for sending Telegram messages"""
+        if not self.is_configured:
+            print("⚠️ Telegram service not configured")
+            return False
+        
+        try:
+            import asyncio
+            import telegram
+            
+            async def _send():
+                await self.send_message(chat_id, message)
+            
+            # Run in async context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_send())
+            loop.close()
+            return True
+        except Exception as e:
+            print(f"❌ Error sending Telegram message: {e}")
+            return False
+    
+    def send_email_notification_telegram(self, chat_id: str, customer_name: str = "Customer"):
+        """Send Telegram notification that an email has been sent"""
+        message_text = f"""🎯 *Contoso Customer Service*
+
+Hi {customer_name}! 👋
+
+✅ *Email Sent Successfully*
+
+We've just sent you a detailed email with your complete conversation summary\\. Please check your inbox\\!
+
+📧 *What's included:*
+• Full conversation transcript
+• Formatted chat history  
+• Professional summary
+
+If you don't see the email, please check your spam folder\\.
+
+Thank you for contacting Contoso\\! 🚀"""
+
+        return self.send_message_sync(chat_id, message_text)
+
+
 class MessageFormatter:
     """Utility class for formatting messages in different formats"""
 
@@ -223,3 +304,10 @@ try:
 except Exception as e:
     sms_service = None
     print(f"SMS service initialization failed: {e}")
+
+try:
+    telegram_service = TelegramService()
+    print("Telegram service initialized successfully" if telegram_service.is_configured else "Telegram service available but not configured")
+except Exception as e:
+    telegram_service = None
+    print(f"Telegram service initialization failed: {e}")

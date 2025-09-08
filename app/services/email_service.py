@@ -35,6 +35,14 @@ class EmailService:
         except Exception as e:
             print(f"WhatsApp service not available: {e}")
         
+        # Initialize Telegram service if available
+        self._telegram_service = None
+        try:
+            from .messaging import TelegramService
+            self._telegram_service = TelegramService()
+        except Exception as e:
+            print(f"Telegram service not available: {e}")
+        
         if not self.is_configured:
             print("⚠️ Email service not configured - missing SMTP credentials")
     
@@ -507,8 +515,8 @@ This is an automated message. Please do not reply to this email.
         
         current_date = datetime.now().strftime("%B %d, %Y at %I:%M %p")
         
-        product_line = f"Product Discussed: {product_name}\n" if product_name else ""
-        activity_line = f"Reference ID: {activity_id}\n" if activity_id else ""
+        product_line = f"Product Discussed: {product_name}" if product_name else ""
+        activity_line = f"Reference ID: {activity_id}" if activity_id else ""
         
         # Generate conversation content
         conversation_text = ""
@@ -526,7 +534,7 @@ This is an automated message. Please do not reply to this email.
             if timestamp:
                 time_str = f" [{timestamp.strftime('%I:%M %p')}]"
             
-            conversation_text += f"\n{sender}{time_str}:\n{content}\n\n" + "-" * 50 + "\n"
+            conversation_text += f"{sender}; {time_str}; {content}\n"
         
         text_template = f"""
 Your {self.company_name} Conversation Summary
@@ -536,9 +544,7 @@ Dear {customer_name},
 Thank you for contacting {self.company_name} customer service. Below is the complete record of your conversation with our assistant Yodha.
 
 CONVERSATION DETAILS:
-Session ID: {session_id}
-Date: {current_date}
-{product_line}{activity_line}
+Session ID: {session_id}; Date: {current_date}; {product_line}; {activity_line}
 
 CONVERSATION TRANSCRIPT:
 {"=" * 60}
@@ -627,6 +633,41 @@ Test performed on: {datetime.now().strftime("%B %d, %Y at %I:%M %p")}
                 return False
         except Exception as e:
             print(f"❌ Error sending WhatsApp notification: {str(e)}")
+            return False
+    
+    def send_telegram_notification(
+        self, 
+        chat_id: str, 
+        customer_name: str = "Customer"
+    ) -> bool:
+        """
+        Send Telegram notification that an email has been sent.
+        
+        Args:
+            chat_id: Customer's Telegram chat ID
+            customer_name: Customer's name for personalization
+            
+        Returns:
+            bool: True if notification sent successfully, False otherwise
+        """
+        if not self._telegram_service or not self._telegram_service.is_configured:
+            print("⚠️ Telegram service not configured")
+            return False
+        
+        try:
+            success = self._telegram_service.send_email_notification_telegram(
+                chat_id=chat_id,
+                customer_name=customer_name
+            )
+            
+            if success:
+                print(f"✅ Telegram notification sent successfully to chat: {chat_id}")
+                return True
+            else:
+                print("❌ Failed to send Telegram notification")
+                return False
+        except Exception as e:
+            print(f"❌ Error sending Telegram notification: {str(e)}")
             return False
 
 

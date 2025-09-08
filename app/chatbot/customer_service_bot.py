@@ -1660,7 +1660,7 @@ Please respond naturally to their message while keeping this context in mind. Us
                         response = "Here are your purchases 1-5:\n\n"
                         for i, purchase in enumerate(session.displayed_purchases, 1):
                             response += f"{i}. {purchase['product_name']} - {purchase['sale_date']}\n"
-                        response += "\nWhich specific item do you need help with? You can tell me the number (1-5) or the product name."
+                        response += "\nWhich specific item do you need help with? **You can tell me the number (1-5) or the product name.**"
                     
                     elif any(phrase in message.lower() for phrase in ['show 6-10', 'show 6 to 10', 'next 5', 'later purchases', 'more recent']):
                         # User wants to see purchases 6-10
@@ -1672,7 +1672,7 @@ Please respond naturally to their message while keeping this context in mind. Us
                             response = "Here are your purchases 6-10:\n\n"
                             for i, purchase in enumerate(session.displayed_purchases, 6):
                                 response += f"{i}. {purchase['product_name']} - {purchase['sale_date']}\n"
-                            response += "\nWhich specific item do you need help with? You can tell me the number (6-10) or the product name."
+                            response += "\nWhich specific item do you need help with? **You can tell me the number (6-10) or the product name.**"
                         else:
                             response = "You only have 5 recent purchases. All of them are already shown above."
                     
