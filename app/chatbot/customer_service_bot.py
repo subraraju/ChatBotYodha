@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 from enum import Enum
 from dotenv import load_dotenv
+from app.chatbot.marketing_scheduler import MarketingScheduler
 
 load_dotenv()
 
@@ -62,6 +63,7 @@ class CustomerState(Enum):
     HELPING_WITH_PURCHASE = "helping_with_purchase"
     PRODUCT_SEARCH = "product_search"
     PRODUCT_SUPPORT = "product_support"
+    MARKETING_SCHEDULER = "marketing_scheduler"
 
 
 class ChatMessage:
@@ -126,6 +128,14 @@ class CustomerServiceBot:
             self.embedding_model = EMBEDDING_MODEL_DEFAULT
         
         self.debug_mode = debug_mode
+        
+        # Initialize marketing scheduler
+        try:
+            self.marketing_scheduler = MarketingScheduler()
+            print("✅ MarketingScheduler initialized")
+        except Exception:
+            self.marketing_scheduler = None
+            print("⚠️ MarketingScheduler not available")
         
         # Connection checks and preloading
         if self.llm_provider == "ollama":
@@ -797,6 +807,94 @@ Generate the closing message:"""
         
         return None
     
+    def _is_explicit_product_switch_request(self, message: str) -> bool:
+        """
+        Detect if the user is explicitly trying to switch products.
+        Only return True for clear switching intentions to prevent accidental context loss.
+        """
+        message_lower = message.lower().strip()
+        
+        # Direct number references (1, 2, 3, etc.) - these are explicit
+        import re
+        number_patterns = [
+            r'^\d+$',  # Just a number: "7"
+            r'product\s+(\d+)',  # "product 7"
+            r'number\s+(\d+)',   # "number 7"
+            r'item\s+(\d+)',     # "item 7"
+            r'(\d+)(?:st|nd|rd|th)',  # "7th", "1st", "2nd", "3rd"
+        ]
+        
+        for pattern in number_patterns:
+            if re.search(pattern, message_lower):
+                return True
+        
+        # Explicit switching phrases (removed generic "what about" and "how about")
+        explicit_switch_phrases = [
+            'switch to', 'change to', 'help with', 'ask about',
+            'different product', 'other product', 'another product',
+            'switch product', 'change product', 'different item',
+            'instead of', 'rather than', 'not this', 'not that',
+            'i have questions about', 'i have a question about',
+            'can you help me with', 'now i need help with', 'now about', 
+            'next i want to ask about', 'i also have', 'i also need help with', 
+            'also about', 'let me ask about', 'can i ask about', 'i want to ask about'
+        ]
+        
+        # Check for explicit switching language
+        for phrase in explicit_switch_phrases:
+            if phrase in message_lower:
+                return True
+        
+        # Product name at the beginning of a sentence (likely explicit)
+        # E.g., "Wireless Headphones Pro - how do I..."
+        if re.match(r'^[A-Z][a-zA-Z\s]+\s*[-:]', message):
+            return True
+        
+        # Check for explicit product names with clear context indicators
+        context_indicators = [
+            'about my', 'about the', 'regarding my', 'regarding the',
+            'with my', 'with the', 'for my', 'for the',
+            'my other', 'the other', 'instead'
+        ]
+        
+        for indicator in context_indicators:
+            if indicator in message_lower:
+                # If they say "about my [product]" or similar, it's explicit
+                return True
+        
+        # Very short messages that are likely product names (but not questions)
+        if (len(message.split()) <= 3 and len(message) > 5 and 
+            not message_lower.startswith(('what', 'how', 'when', 'where', 'why', 'can', 'could', 'would', 'do', 'does'))):
+            # Could be a product name like "Wireless Headphones" but not a question
+            return True
+        
+        # Check for question transition patterns that indicate switching
+        # Only match when followed to product-related words or "my"/"the"
+        question_transition_patterns = [
+            'what about my', 'what about the', 'how about my', 'how about the',
+            'and what about my', 'and what about the', 'now what about my', 'now what about the',
+            'can you tell me about my', 'can you tell me about the',
+            'i need to know about my', 'i need to know about the'
+        ]
+        
+        for pattern in question_transition_patterns:
+            if pattern in message_lower:
+                return True
+        
+        # Check if the message starts with a question word followed by explicit product reference
+        # This covers cases like "What about my Bluetooth Speaker?" but not "What is the warranty?"
+        # Only match if they mention "my [product]" or "the [product]" in a switching context
+        if re.match(r'^(what|how)\s+about\s+(my|the)\s+\w', message_lower):
+            # "What about my..." or "How about the..." - likely product switching
+            return True
+        
+        # Default: don't switch unless explicitly requested
+        return False
+    
+    def _confirm_marketer_email_prompt(self, email: str) -> str:
+        """Generate confirmation prompt for marketer email"""
+        return f"I understand you'd like to schedule a meeting with **{email}**. Is this email correct? (yes/no)"
+    
     def _search_product_documentation(self, product_name: str, question: str, return_debug_info: bool = False) -> Optional[str]:
         """Search for product information in uploaded PDFs with optional debugging info"""
         debug_info = {
@@ -1369,6 +1467,27 @@ Please respond naturally to their message while keeping this context in mind. Us
             traceback.print_exc()
             return f"Thank you for using {COMPANY_NAME} customer service. Have a great day!", False
     
+    def _is_marketing_request(self, message: str) -> bool:
+        """Detect if the user wants to schedule a meeting with marketing."""
+        message_lower = message.lower()
+        triggers = [
+            'connect to marketing', 'contact marketing', 'speak to marketing', 'talk to marketing',
+            'schedule.*marketing', 'meeting with marketing', 'connect me with marketing', 'marketing person',
+            'connect to the marketing', 'speak with marketing', 'i want to schedule a meeting with marketing'
+        ]
+        for t in triggers:
+            try:
+                if re.search(t, message_lower):
+                    return True
+            except re.error:
+                if t in message_lower:
+                    return True
+        return False
+
+    def _confirm_marketer_email_prompt(self, email: str) -> str:
+        """Generate confirmation prompt for marketer email"""
+        return f"I have the email address as: **{email}**\n\nDo you confirm this is the marketing person's email? (yes/no)"
+    
     def process_message(self, message: str, session: CustomerSession, debug_mode: bool = False) -> Tuple[str, CustomerSession]:
         """Process customer message and return appropriate response with optional debug info"""
         
@@ -1395,6 +1514,25 @@ Please respond naturally to their message while keeping this context in mind. Us
         print("➡️ Continuing with normal message processing...")
         # Add user message to session
         session.messages.append(ChatMessage("user", message))
+        session.updated_at = datetime.now()
+        
+        # Universal check: does user want to contact marketing? This can be triggered anywhere.
+        if self._is_marketing_request(message):
+            # Initialize marketing flow container in session if not present
+            if not hasattr(session, 'marketing_flow') or session.marketing_flow is None:
+                session.marketing_flow = {
+                    'attempts': 0,
+                    'max_attempts': getattr(self.marketing_scheduler, 'max_attempts', 2),
+                    'marketer_email': None,
+                    'suggested_slots': [],
+                    'booking': None
+                }
+            session.customer_state = CustomerState.MARKETING_SCHEDULER
+            # Ask for marketer email if not provided
+            response = "Sure — I can help schedule a meeting with marketing. Could you provide the marketing person's email address?"
+            session.messages.append(ChatMessage("assistant", response))
+            return response, session
+
         session.updated_at = datetime.now()
         
         response = ""
@@ -1501,6 +1639,11 @@ Please respond naturally to their message while keeping this context in mind. Us
                 for i, purchase in enumerate(session.displayed_purchases, start_num):
                     response += f"{i}. {purchase['product_name']} - {purchase['sale_date']}\n"
             
+            # Check if they're requesting marketing assistance
+            elif self._is_marketing_request(message):
+                session.customer_state = CustomerState.MARKETING_SCHEDULER
+                response = "I can help with that! Just to confirm, could you please provide the email address of the marketing person you want to contact?"
+            
             else:
                 response = self._generate_contextual_response(message, session)
         
@@ -1523,13 +1666,37 @@ Please respond naturally to their message while keeping this context in mind. Us
         elif session.customer_state == CustomerState.PRODUCT_SUPPORT:
             # Handle specific product support
             if session.selected_product:
-                # Check if user wants to switch to a different product (could be from any range 1-10)
-                new_product = self._extract_product_from_input(message, session.displayed_purchases, session)
-                
                 # Get current product name for comparison
                 current_product_name = session.selected_product.get('product_name') if isinstance(session.selected_product, dict) else session.selected_product
                 
-                if new_product and new_product != current_product_name:
+                # Only check for product switching if user explicitly indicates they want to switch
+                # or mentions specific product numbers/names in a switching context
+                should_check_switch = self._is_explicit_product_switch_request(message)
+                
+                new_product = None
+                if should_check_switch:
+                    # Only extract product when user explicitly wants to switch
+                    new_product = self._extract_product_from_input(message, session.displayed_purchases, session)
+                
+                if should_check_switch and not new_product:
+                    # User indicated they want to switch but we couldn't identify the specific product
+                    # Show them the purchase list to choose from
+                    start_num = 1 if len(session.displayed_purchases) == 5 and session.displayed_purchases == session.all_purchases[:5] else 6
+                    end_range = "1-5" if start_num == 1 else "6-10"
+                    
+                    response = f"**Which product would you like help with?** (Currently showing {end_range}):\n\n" + \
+                             "\n".join([f"{i+start_num}. **{purchase['product_name']}** - {purchase['sale_date']}" 
+                                      for i, purchase in enumerate(session.displayed_purchases)])
+                    
+                    # Offer to show the other range if available
+                    if start_num == 1 and len(session.all_purchases) > 5:
+                        response += "\n\nOr say **'show 6-10'** to see your other recent purchases."
+                    elif start_num == 6:
+                        response += "\n\nOr say **'show 1-5'** to see your earlier purchases."
+                    
+                    session.selected_product = None
+                
+                elif new_product and new_product != current_product_name:
                     # User is switching to a different product - determine which range it's in
                     # Note: session.selected_product is now updated in _extract_product_from_input
                     
@@ -1590,6 +1757,7 @@ Please respond naturally to their message while keeping this context in mind. Us
                     session.selected_product = None
                     
                     response = "Here are your purchases 1-5:\n\n"
+
                     for i, purchase in enumerate(session.displayed_purchases, 1):
                         response += f"{i}. {purchase['product_name']} - {purchase['sale_date']}\n"
                     response += "\nWhich specific item do you need help with? You can tell me the number (1-5) or the product name."
@@ -1660,7 +1828,7 @@ Please respond naturally to their message while keeping this context in mind. Us
                         response = "Here are your purchases 1-5:\n\n"
                         for i, purchase in enumerate(session.displayed_purchases, 1):
                             response += f"{i}. {purchase['product_name']} - {purchase['sale_date']}\n"
-                        response += "\nWhich specific item do you need help with? **You can tell me the number (1-5) or the product name.**"
+                        response += "\nWhich specific item do you need help with? You can tell me the number (1-5) or the product name."
                     
                     elif any(phrase in message.lower() for phrase in ['show 6-10', 'show 6 to 10', 'next 5', 'later purchases', 'more recent']):
                         # User wants to see purchases 6-10
@@ -1672,7 +1840,7 @@ Please respond naturally to their message while keeping this context in mind. Us
                             response = "Here are your purchases 6-10:\n\n"
                             for i, purchase in enumerate(session.displayed_purchases, 6):
                                 response += f"{i}. {purchase['product_name']} - {purchase['sale_date']}\n"
-                            response += "\nWhich specific item do you need help with? **You can tell me the number (6-10) or the product name.**"
+                            response += "\nWhich specific item do you need help with? You can tell me the number (6-10) or the product name."
                         else:
                             response = "You only have 5 recent purchases. All of them are already shown above."
                     
@@ -1726,8 +1894,8 @@ Please respond naturally to their message while keeping this context in mind. Us
                                               for i, purchase in enumerate(session.displayed_purchases)])
                             
                             # If user is seeing 1-5 and there are more, offer to show more
-                            if session.has_more_purchases and start_num == 1:
-                                response += "\n\nOr say 'show more purchases' to see purchases 6-10."
+                            if start_num == 1 and len(session.all_purchases) > 5:
+                                response += "\n\nOr say 'show 6-10' to see your other recent purchases."
                         
                         else:
                             # User didn't find what they want in current list - provide helpful guidance
@@ -1743,6 +1911,155 @@ Please respond naturally to their message while keeping this context in mind. Us
                                 current_range = f"({purchase_range})" if purchase_range != "1-5" else "(1-5)"
                                 response = f"I couldn't identify which product you're referring to. Please tell me the number {current_range} from your purchase list or the product name, or ask me for help with something else."
         
+        elif session.customer_state == CustomerState.MARKETING_SCHEDULER:
+            # Handle scheduling meetings with marketing
+            mf = getattr(session, 'marketing_flow', None) or {}
+
+            # Check if user wants to go back to product flow
+            back_triggers = ['back', 'go back', 'return', 'product questions', 'product support', 'my purchases']
+            if any(trigger in message.lower() for trigger in back_triggers):
+                # Return to previous state based on session context
+                if session.customer_id:
+                    session.customer_state = CustomerState.PRODUCT_SUPPORT if hasattr(session, 'selected_product') and session.selected_product else CustomerState.IDENTIFIED
+                else:
+                    session.customer_state = CustomerState.COLLECTING_INFO
+                response = "Okay, let's go back to your product questions. How can I help you?"
+            else:
+                # Step 1: Get marketer email
+                if not mf.get('marketer_email'):
+                    # Extract email from message or use provided value
+                    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
+                    if email_match:
+                        marketer_email = email_match.group()
+                        mf['marketer_email'] = marketer_email
+                        session.marketing_flow = mf
+                        response = self._confirm_marketer_email_prompt(marketer_email)
+                    else:
+                        response = "Please provide the marketing person's email address so I can check their calendar."
+
+                # Step 2: Confirm marketer email and ask for user email
+                elif mf.get('marketer_email') and not mf.get('marketer_confirmed'):
+                    if message.strip().lower() in ["yes", "y", "correct", "that's correct", "confirm"]:
+                        mf['marketer_confirmed'] = True
+                        session.marketing_flow = mf
+                        response = "Great! Now, I need **your email address** so I can add you to the calendar invite. What's your email?"
+                    elif message.strip().lower() in ["no", "n", "incorrect"]:
+                        mf['marketer_email'] = None
+                        session.marketing_flow = mf
+                        response = "Okay, please provide the correct marketing person's email address."
+                    else:
+                        response = "Please confirm if this email is correct by saying 'yes' or 'no'."
+
+                # Step 3: Get and confirm user email
+                elif mf.get('marketer_confirmed') and not mf.get('user_email'):
+                    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
+                    if email_match:
+                        user_email = email_match.group()
+                        mf['user_email'] = user_email
+                        session.marketing_flow = mf
+                        response = f"I have your email as: **{user_email}**\n\nIs this correct? (yes/no)"
+                    else:
+                        response = "Please provide a valid email address."
+
+                # Step 4: Confirm user email and show available slots
+                elif mf.get('user_email') and not mf.get('user_email_confirmed'):
+                    if message.strip().lower() in ["yes", "y", "correct", "that's correct", "confirm"]:
+                        mf['user_email_confirmed'] = True
+                        # Generate suggestions for the current attempt
+                        attempts = mf.get('attempts', 0)
+                        try:
+                            slots = self.marketing_scheduler.suggest_slots(mf['marketer_email'], attempts=attempts)
+                        except Exception as e:
+                            print(f"❌ Error in suggest_slots: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            slots = []
+                        mf['suggested_slots'] = slots
+                        session.marketing_flow = mf
+
+                        if not slots:
+                            response = "I couldn't find available times for that week. Would you like me to try the following week? (yes/no)"
+                        else:
+                            # Present slots to user - use proper markdown formatting for Streamlit compatibility
+                            response = "**Available 1-hour slots (all times local):**\n\n"
+                            for i, (s, e) in enumerate(slots, 1):
+                                response += f"{i}. {s.strftime('%A %Y-%m-%d %H:%M')} - {e.strftime('%H:%M')}\n"
+                            response += f"\nPlease pick a slot number (1-{len(slots)}) or say 'no' to see next week's options."
+                    elif message.strip().lower() in ["no", "n", "incorrect"]:
+                        mf['user_email'] = None
+                        session.marketing_flow = mf
+                        response = "Okay, please provide your correct email address."
+                    else:
+                        response = "Please confirm if this email is correct by saying 'yes' or 'no'."
+
+                # If suggested slots are present and user picks one
+                elif mf.get('suggested_slots') and mf.get('user_email_confirmed'):
+                    if message.strip().isdigit():
+                        idx = int(message.strip()) - 1
+                        slots = mf['suggested_slots']
+                        if 0 <= idx < len(slots):
+                            s, e = slots[idx]
+                            # Book the slot with both attendees
+                            meeting_id = None
+                            try:
+                                attendees = [mf['marketer_email'], mf['user_email']]
+                                meeting_id = self.marketing_scheduler.book_slot(
+                                    mf['marketer_email'], s, e,
+                                    subject=f"Customer Meeting - {self.company_name}",
+                                    attendees=attendees
+                                )
+                            except Exception as booking_error:
+                                print(f"Booking error: {booking_error}")
+                                meeting_id = None
+
+                            if meeting_id:
+                                mf['booking'] = {'meeting_id': meeting_id, 'start': s, 'end': e}
+                                session.marketing_flow = mf
+                                response = f"""**🎉 Meeting Successfully Booked!**
+
+📅 **Date & Time**: {s.strftime('%A, %B %d, %Y at %H:%M')}
+⏰ **Duration**: 1 hour
+👥 **Attendees**: 
+   - {mf['marketer_email']} (Marketing)
+   - {mf['user_email']} (You)
+🆔 **Meeting ID**: {meeting_id}
+
+**📧 Calendar invitations have been sent to both email addresses.**
+The invitation includes all meeting details and will be added to your calendars.
+
+Would you like to return to your product questions or end the chat?"""
+                            else:
+                                response = "I couldn't book that slot due to a scheduling error. Would you like me to suggest the next available slots? (yes/no)"
+                        else:
+                            response = "Invalid slot number. Please pick 1, 2 or 3, or say 'no' to see next week's options."
+
+                    # If user declines suggested slots
+                    elif message.strip().lower() in ["no", "n", "not good", "don't like these"]:
+                        mf['attempts'] = mf.get('attempts', 0) + 1
+                        session.marketing_flow = mf
+                        if mf['attempts'] <= mf.get('max_attempts', 2):
+                            # Suggest next week's slots
+                            try:
+                                slots = self.marketing_scheduler.suggest_slots(mf['marketer_email'], attempts=mf['attempts'])
+                            except:
+                                slots = []
+                            mf['suggested_slots'] = slots
+                            session.marketing_flow = mf
+                            if not slots:
+                                response = "I couldn't find slots for the next week either. I can only try up to a couple weeks. Please contact marketing directly if this doesn't work."
+                            else:
+                                response = "**Alternative slots for the following week:**\n\n"
+                                for i, (s, e) in enumerate(slots, 1):
+                                    response += f"{i}. {s.strftime('%A %Y-%m-%d %H:%M')} - {e.strftime('%H:%M')}\n"
+                                response += f"\nPlease pick a slot number (1-{len(slots)}) or say 'no' to stop."
+                        else:
+                            response = "I've suggested slots for two weeks already. I can't propose more future weeks automatically. Please contact marketing directly if needed."
+                    else:
+                        response = "Please pick a slot number (1-6) or say 'no' to see next week's options, or say 'back' to return to product questions."
+                else:
+                    # Default prompt
+                    response = "Would you like me to schedule a meeting with marketing? If so, please provide the marketing person's email address."
+        
         # Add response to session
         session.messages.append(ChatMessage("assistant", response))
         
@@ -1755,8 +2072,3 @@ Please respond naturally to their message while keeping this context in mind. Us
         welcome_msg = self._generate_welcome_message()
         session.messages.append(ChatMessage("assistant", welcome_msg))
         return session
-
-
-# For Streamlit compatibility
-EnhancedChatAgent = CustomerServiceBot
-ChatSession = CustomerSession
