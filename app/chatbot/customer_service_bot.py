@@ -1523,13 +1523,25 @@ Please respond naturally to their message while keeping this context in mind. Us
                 session.marketing_flow = {
                     'attempts': 0,
                     'max_attempts': getattr(self.marketing_scheduler, 'max_attempts', 2),
+                    'step': 'selecting_person',  # New step for person selection
                     'marketer_email': None,
+                    'marketing_person': None,
                     'suggested_slots': [],
                     'booking': None
                 }
             session.customer_state = CustomerState.MARKETING_SCHEDULER
-            # Ask for marketer email if not provided
-            response = "Sure — I can help schedule a meeting with marketing. Could you provide the marketing person's email address?"
+            
+            # Use the enhanced marketing person selection
+            try:
+                from app.api.marketing_persons import get_marketing_persons_list
+                team_list = get_marketing_persons_list()
+                response = team_list
+            except Exception as e:
+                print(f"❌ Error loading marketing team: {e}")
+                # Fallback to old behavior if the new system isn't available
+                response = "Sure — I can help schedule a meeting with marketing. Could you provide the marketing person's email address?"
+                session.marketing_flow['step'] = 'email_input'  # Fallback mode
+            
             session.messages.append(ChatMessage("assistant", response))
             return response, session
 
@@ -1925,46 +1937,82 @@ Please respond naturally to their message while keeping this context in mind. Us
                     session.customer_state = CustomerState.COLLECTING_INFO
                 response = "Okay, let's go back to your product questions. How can I help you?"
             else:
-                # Step 1: Get marketer email
-                if not mf.get('marketer_email'):
-                    # Extract email from message or use provided value
-                    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
-                    if email_match:
-                        marketer_email = email_match.group()
-                        mf['marketer_email'] = marketer_email
-                        session.marketing_flow = mf
-                        response = self._confirm_marketer_email_prompt(marketer_email)
-                    else:
-                        response = "Please provide the marketing person's email address so I can check their calendar."
-
-                # Step 2: Confirm marketer email and ask for user email
-                elif mf.get('marketer_email') and not mf.get('marketer_confirmed'):
-                    if message.strip().lower() in ["yes", "y", "correct", "that's correct", "confirm"]:
-                        mf['marketer_confirmed'] = True
-                        session.marketing_flow = mf
-                        response = "Great! Now, I need **your email address** so I can add you to the calendar invite. What's your email?"
-                    elif message.strip().lower() in ["no", "n", "incorrect"]:
-                        mf['marketer_email'] = None
-                        session.marketing_flow = mf
-                        response = "Okay, please provide the correct marketing person's email address."
-                    else:
-                        response = "Please confirm if this email is correct by saying 'yes' or 'no'."
-
-                # Step 3: Get and confirm user email
-                elif mf.get('marketer_confirmed') and not mf.get('user_email'):
+                # Handle based on current step in the flow
+                current_step = mf.get('step', 'selecting_person')
+                
+                if current_step == 'selecting_person':
+                    # User should select a marketing person by number (1, 2, 3)
+                    try:
+                        selection = int(message.strip())
+                        from app.api.marketing_persons import get_marketing_person_info_by_selection
+                        
+                        person_info = get_marketing_person_info_by_selection(selection)
+                        if person_info:
+                            # Store selected person info and move to user email collection
+                            mf['marketing_person'] = person_info
+                            mf['marketer_email'] = person_info['email']
+                            mf['step'] = 'collecting_user_email'
+                            session.marketing_flow = mf
+                            
+                            response = f"✅ Great choice! **{person_info['name']}** is our {person_info['specialization']}.\n\n"
+                            response += "Now, I need **your email address** so I can add you to the calendar invite. What's your email?"
+                        else:
+                            response = "❌ Invalid selection. Please choose 1, 2, or 3 from the marketing team list above."
+                    except ValueError:
+                        response = "❌ Please enter a valid number (1, 2, or 3) to select a marketing team member."
+                    except Exception as e:
+                        print(f"❌ Error in person selection: {e}")
+                        response = "❌ Sorry, there was an error processing your selection. Please try again with 1, 2, or 3."
+                
+                elif current_step == 'email_input':
+                    # Fallback mode - original email input flow
+                    if not mf.get('marketer_email'):
+                        # Extract email from message or use provided value
+                        email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
+                        if email_match:
+                            marketer_email = email_match.group()
+                            mf['marketer_email'] = marketer_email
+                            session.marketing_flow = mf
+                            response = self._confirm_marketer_email_prompt(marketer_email)
+                        else:
+                            response = "Please provide the marketing person's email address so I can check their calendar."
+                
+                elif current_step == 'collecting_user_email':
+                    # Get user's email address
                     email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
                     if email_match:
                         user_email = email_match.group()
                         mf['user_email'] = user_email
+                        mf['step'] = 'confirming_user_email'
                         session.marketing_flow = mf
                         response = f"I have your email as: **{user_email}**\n\nIs this correct? (yes/no)"
                     else:
                         response = "Please provide a valid email address."
 
-                # Step 4: Confirm user email and show available slots
-                elif mf.get('user_email') and not mf.get('user_email_confirmed'):
+                elif current_step == 'email_confirmed' and mf.get('marketer_email') and not mf.get('marketer_confirmed'):
+                    # Fallback mode - confirm marketer email
+                    if message.strip().lower() in ["yes", "y", "correct", "that's correct", "confirm"]:
+                        mf['marketer_confirmed'] = True
+                        mf['step'] = 'collecting_user_email'
+                        session.marketing_flow = mf
+                        response = "Great! Now, I need **your email address** so I can add you to the calendar invite. What's your email?"
+                    elif message.strip().lower() in ["no", "n", "incorrect"]:
+                        mf['marketer_email'] = None
+                        mf['step'] = 'email_input'
+                        session.marketing_flow = mf
+                        response = "Okay, please provide the correct marketing person's email address."
+                    else:
+                        response = "Please confirm if this email is correct by saying 'yes' or 'no'."
+
+                elif current_step == 'confirming_user_email':
                     if message.strip().lower() in ["yes", "y", "correct", "that's correct", "confirm"]:
                         mf['user_email_confirmed'] = True
+                        mf['step'] = 'showing_slots'
+                        
+                        # Get marketing person info for display
+                        marketing_person = mf.get('marketing_person', {})
+                        marketing_name = marketing_person.get('name', 'marketing team member')
+                        
                         # Generate suggestions for the current attempt
                         attempts = mf.get('attempts', 0)
                         try:
@@ -1978,22 +2026,31 @@ Please respond naturally to their message while keeping this context in mind. Us
                         session.marketing_flow = mf
 
                         if not slots:
-                            response = "I couldn't find available times for that week. Would you like me to try the following week? (yes/no)"
+                            response = f"😔 {marketing_name} has no available slots this week. Would you like me to try the following week? (yes/no)"
                         else:
-                            # Present slots to user - use proper markdown formatting for Streamlit compatibility
-                            response = "**Available 1-hour slots (all times local):**\n\n"
+                            # Present slots to user with enhanced formatting
+                            response = f"✅ Great! **{marketing_name}** is available:\n\n"
                             for i, (s, e) in enumerate(slots, 1):
-                                response += f"{i}. {s.strftime('%A %Y-%m-%d %H:%M')} - {e.strftime('%H:%M')}\n"
-                            response += f"\nPlease pick a slot number (1-{len(slots)}) or say 'no' to see next week's options."
+                                day_name = s.strftime('%A')
+                                date_str = s.strftime('%B %d')
+                                time_str = s.strftime('%I:%M %p')
+                                end_time_str = e.strftime('%I:%M %p')
+                                timezone_str = s.strftime('%Z') or 'IST'
+                                
+                                response += f"**{i}. {day_name}, {date_str}**\n"
+                                response += f"   🕐 {time_str} - {end_time_str} {timezone_str}\n\n"
+                            
+                            response += f"Please reply with the slot number you prefer (1-{len(slots)}) or say 'no' to see next week's options."
                     elif message.strip().lower() in ["no", "n", "incorrect"]:
                         mf['user_email'] = None
+                        mf['step'] = 'collecting_user_email'
                         session.marketing_flow = mf
                         response = "Okay, please provide your correct email address."
                     else:
                         response = "Please confirm if this email is correct by saying 'yes' or 'no'."
 
-                # If suggested slots are present and user picks one
-                elif mf.get('suggested_slots') and mf.get('user_email_confirmed'):
+                # If in slot selection phase
+                elif current_step == 'showing_slots' and mf.get('suggested_slots') and mf.get('user_email_confirmed'):
                     if message.strip().isdigit():
                         idx = int(message.strip()) - 1
                         slots = mf['suggested_slots']
@@ -2015,17 +2072,33 @@ Please respond naturally to their message while keeping this context in mind. Us
                             if meeting_id:
                                 mf['booking'] = {'meeting_id': meeting_id, 'start': s, 'end': e}
                                 session.marketing_flow = mf
-                                response = f"""**🎉 Meeting Successfully Booked!**
+                                
+                                # Get marketing person info for enhanced confirmation
+                                marketing_person = mf.get('marketing_person', {})
+                                marketing_name = marketing_person.get('name', 'Marketing Team Member')
+                                
+                                # Format date and time for better display
+                                day_name = s.strftime('%A')
+                                date_str = s.strftime('%B %d, %Y')
+                                time_str = s.strftime('%I:%M %p')
+                                end_time_str = e.strftime('%I:%M %p')
+                                timezone_str = s.strftime('%Z') or 'IST'
+                                
+                                response = f"""🎉 **Meeting Confirmed!**
 
-📅 **Date & Time**: {s.strftime('%A, %B %d, %Y at %H:%M')}
-⏰ **Duration**: 1 hour
-👥 **Attendees**: 
-   - {mf['marketer_email']} (Marketing)
-   - {mf['user_email']} (You)
-🆔 **Meeting ID**: {meeting_id}
+� **When:** {day_name}, {date_str}
+🕐 **Time:** {time_str} - {end_time_str} {timezone_str}
+👤 **With:** {marketing_name}
+📧 **Email:** {mf['marketer_email']}
 
-**📧 Calendar invitations have been sent to both email addresses.**
-The invitation includes all meeting details and will be added to your calendars.
+📧 **Next Steps:**
+• You'll receive a calendar invitation shortly
+• {marketing_name} will send meeting connection details
+• Check your email 15 minutes before the meeting
+
+❓ **Questions?** Reply to the calendar invitation or contact {marketing_name} directly.
+
+Thank you for choosing our service! 🙏
 
 Would you like to return to your product questions or end the chat?"""
                             else:

@@ -209,6 +209,22 @@ azure.env
 secrets.json
 config.json
 credentials.json
+token.json
+*.key
+*.pem
+*.p12
+client_secret*.json
+service-account*.json
+
+# OAuth and authentication tokens
+*_token.json
+*_credentials.json
+refresh_token*
+access_token*
+
+# Environment files (additional patterns)
+.env.*
+*.env
 
 # Test output files
 sample_*.html
@@ -250,3 +266,16 @@ downloads/
 # Test files
 test_*.py
 demo_*.py
+debug_*.py
+check_*.py
+*_backup.py
+*_test.py
+*_diagnostic.py
+*_debug.py
+*_demo.py
+sample_*.py
+simple_*.py
+*_solution.py
+*_guide.py
+integration_*.py
+chatbot_integration_functions.py

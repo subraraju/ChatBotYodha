@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 import msal
+from urllib.parse import quote
 
 # Load environment variables
 load_dotenv()
@@ -102,6 +103,28 @@ class TeamsIntegration:
             print(f"❌ Teams authentication error: {e}")
             raise
     
+    def _convert_gmail_to_guest_upn(self, gmail_address: str) -> str:
+        """
+        Convert Gmail address to Azure AD guest UPN format
+        
+        Args:
+            gmail_address: Original Gmail address (e.g., nagakartheek.ds@gmail.com)
+            
+        Returns:
+            Guest UPN (e.g., nagakartheek.ds_gmail.com#EXT#@tenant.onmicrosoft.com)
+        """
+        if "@gmail.com" in gmail_address.lower():
+            # Extract username part
+            username = gmail_address.replace("@gmail.com", "").replace("@Gmail.com", "")
+            # Get tenant domain from our tenant ID or use the known one
+            tenant_domain = "nagakartheekdsgmail.onmicrosoft.com"
+            guest_upn = f"{username}_gmail.com#EXT#@{tenant_domain}"
+            print(f"🔄 Converted Gmail {gmail_address} → Guest UPN {guest_upn}")
+            return guest_upn
+        else:
+            # Not a Gmail address, return as-is
+            return gmail_address
+    
     def create_teams_meeting(
         self, 
         subject: str,
@@ -132,6 +155,28 @@ class TeamsIntegration:
             return None
         
         try:
+            # Convert Gmail to guest UPN if needed
+            guest_upn = self._convert_gmail_to_guest_upn(organizer_email)
+            
+            # Prepare headers first
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json"
+            }
+            
+            # First, verify the user exists in the tenant
+            print(f"🔍 Verifying user exists in tenant: {guest_upn}")
+            encoded_upn = quote(guest_upn, safe='')
+            user_check_url = f"{self.graph_endpoint}/users/{encoded_upn}"
+            user_response = requests.get(user_check_url, headers=headers)
+            
+            if user_response.status_code == 200:
+                user_info = user_response.json()
+                print(f"✅ User found: {user_info.get('displayName', 'Unknown')} ({user_info.get('userPrincipalName', 'N/A')})")
+            else:
+                print(f"⚠️ User lookup failed ({user_response.status_code}): {user_response.text}")
+                print(f"💡 This might explain why Teams meeting creation fails")
+            
             # Prepare the meeting request
             meeting_data = {
                 "subject": subject,
@@ -160,15 +205,10 @@ class TeamsIntegration:
                     } for email in attendees
                 ]
             
-            headers = {
-                "Authorization": f"Bearer {self.access_token}",
-                "Content-Type": "application/json"
-            }
-            
             # Try multiple endpoints - first attempt with /me, then fallback to user-specific
             endpoints_to_try = [
                 f"{self.graph_endpoint}/me/onlineMeetings",
-                f"{self.graph_endpoint}/users/{organizer_email}/onlineMeetings"
+                f"{self.graph_endpoint}/users/{encoded_upn}/onlineMeetings"
             ]
             
             for i, endpoint in enumerate(endpoints_to_try, 1):
@@ -205,6 +245,28 @@ class TeamsIntegration:
                             
                     else:
                         print(f"⚠️ Method {i} failed with status {response.status_code}: {response.text}")
+                        
+                        # More detailed error analysis
+                        try:
+                            error_data = response.json() if response.text else {}
+                            error_info = error_data.get("error", {})
+                            error_code = error_info.get("code", "Unknown")
+                            error_message = error_info.get("message", "No message")
+                            print(f"      🔍 Error Code: {error_code}")
+                            print(f"      🔍 Error Message: {error_message}")
+                            
+                            # Check for specific error conditions
+                            if response.status_code == 404:
+                                print(f"      💡 404 Error likely means:")
+                                print(f"         • User '{guest_upn}' needs OnlineMeetings permissions")
+                                print(f"         • Guest user may not have Teams access")
+                                print(f"         • App needs admin consent for application permissions")
+                            elif response.status_code == 403:
+                                print(f"      💡 403 Error means insufficient permissions")
+                                print(f"         • App needs OnlineMeetings.ReadWrite.All permission")
+                                print(f"         • Admin consent may be required")
+                        except:
+                            print(f"      📝 Raw response: {response.text}")
                         
                 except Exception as endpoint_error:
                     print(f"⚠️ Method {i} encountered error: {endpoint_error}")
@@ -263,6 +325,16 @@ class EnhancedGoogleCalendarAdapter:
     def get_user_timezone(self, email: str) -> str:
         """Delegate timezone detection to Google Calendar adapter"""
         return self.google_calendar.get_user_timezone(email)
+    
+    def _get_marketing_person_phone(self, email: str) -> str:
+        """Get marketing person's phone number by email"""
+        try:
+            from app.api.marketing_persons import MarketingPersonsAPI
+            api = MarketingPersonsAPI()
+            person = api.get_marketing_person_by_email(email)
+            return person.phone if person and person.phone != "N/A" else "Contact via email"
+        except Exception:
+            return "Contact via email"
     
     def book_meeting(self, email: str, start: datetime, end: datetime, subject: str, attendees: list) -> Optional[str]:
         """
@@ -333,25 +405,16 @@ class EnhancedGoogleCalendarAdapter:
                     f"Phone Number: {teams_meeting.get('phone_number', 'See Teams invitation')}",
                     "",
                     f"Meeting scheduled via ChatBot Assistant",
-                    f"Organizer: {email}"
+                    f"📧 Organizer: {email}",
+                    f"📞 Organizer Phone: {self._get_marketing_person_phone(email)}"
                 ]
             else:
                 description_parts = [
                     f"📞 Professional Meeting - {subject}",
                     "",
-                    "🎥 Video Conference Options:",
-                    "• Microsoft Teams (organizer will send link via email)",
-                    "• Zoom Meeting (backup option)",
-                    "• Google Meet (alternative)",
-                    "• Phone Conference (always available)",
-                    "",
-                    "📞 Connection Instructions:",
-                    "• Organizer will provide dial-in details 15 minutes before meeting",
-                    "• Check your email inbox for connection details",
-                    "• For urgent questions, contact organizer directly",
-                    "",
                     f"📧 Meeting Organizer: {email}",
-                    f"🤖 Scheduled via: ChatBot Assistant"
+                    f"📞 Organizer Phone: {self._get_marketing_person_phone(email)}",
+                    f"🤖 Scheduled via: Yodha ChatBot Assistant"
                 ]
             
             if user_email:
@@ -360,20 +423,10 @@ class EnhancedGoogleCalendarAdapter:
             # Add comprehensive meeting information
             description_parts.extend([
                 "",
-                "📋 Meeting Agenda:",
-                "• Welcome and introductions",
-                "• Discuss customer requirements and needs",
-                "• Product/service overview and demonstration", 
-                "• Technical Q&A session",
-                "• Pricing and package options",
-                "• Next steps and follow-up actions",
-                "",
                 "🔔 Important Notes:",
                 "• Please confirm attendance by responding to this invitation",
                 "• For questions or changes, contact organizer directly", 
                 f"• Contact: {email}",
-                "",
-                "✅ Professional meeting with full coordination support"
             ])
             
             # Create enhanced event
@@ -389,7 +442,7 @@ class EnhancedGoogleCalendarAdapter:
                 },
                 'attendees': [{'email': attendee} for attendee in attendees + ([user_email] if user_email else [])],
                 'description': "\n".join(description_parts),
-                'location': teams_join_url if teams_join_url else "Virtual Meeting",
+                # 'location': teams_join_url if teams_join_url else "Virtual Meeting",
                 'reminders': {
                     'useDefault': False,
                     'overrides': [
