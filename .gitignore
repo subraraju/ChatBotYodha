@@ -209,6 +209,7 @@ azure.env
 secrets.json
 config.json
 credentials.json
+!credentials.example.json
 token.json
 *.key
 *.pem
@@ -219,12 +220,19 @@ service-account*.json
 # OAuth and authentication tokens
 *_token.json
 *_credentials.json
+!credentials.example.json
 refresh_token*
 access_token*
 
 # Environment files (additional patterns)
-.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.docker
+.env.ollama
 *.env
+!.env.example
 
 # Test output files
 sample_*.html
@@ -259,9 +267,12 @@ yarn.lock
 uploads/
 downloads/
 
-# Markdown files (except main README)
+# Markdown files (except main README and setup guides)
 *.md
 !README.md
+!SECRETS_SETUP_GUIDE.md
+!MULTISTEP_FUNCTION_CALLING.md
+!FUNCTION_CALLS_IMPLEMENTATION.md
 
 # Test files
 test_*.py

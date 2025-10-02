@@ -1,61 +1,81 @@
+
 # ChatBotYodha
-AI-powered customer service chatbot built with LangChain &amp; Azure for any Product based industry.
+AI-powered customer service & marketing assistant for product-based industries, built with LangChain, Azure, and modern LLMs.
+
+---
+
+## 🗂️ Repository Overview
+
+This repository provides a robust, secure, and extensible chatbot platform for:
+- **Customer Service**: Product queries, support, and sales analytics
+- **Marketing Appointment Scheduling**: Book meetings with marketing staff, including phone and calendar integration (Google/Teams)
+- **Multi-step Reasoning**: Advanced agentic workflows for complex queries
+- **Secure Credential Management**: All secrets are managed via `.env` and `credentials.json` (see [Secrets Setup Guide](SECRETS_SETUP_GUIDE.md))
+
+---
+
 
 ## ✨ Features
 
-### 🎯 **Core Functionality**
-- **Intelligent Conversational AI** with context awareness
-- **Multi-step Function Calling** for complex query handling
-- **Enhanced Response Formatting** with automatic bold highlighting
-- **Session Management** with conversation tracking
-- **Real-time Database Integration** for customer, product, and sales data
+### 🎯 Core Functionality
+- **Conversational AI**: Context-aware, multi-step reasoning
+- **Function-Call Architecture**: Structured, reliable, and maintainable (see [Function Calls](FUNCTION_CALLS_IMPLEMENTATION.md))
+- **Session Management**: Persistent chat sessions, export, and sharing
+- **Real-time Database Integration**: Customer, product, sales, and activity data
+- **Marketing Meeting Scheduling**: Book with marketing staff, select by expertise, timezone-aware, phone in invite, Google/Teams calendar integration
 
-### 💬 **Communication Channels**
-- **📧 Email Notifications** with full conversation content (HTML & text)
-- **🌐 Web Interface** with Streamlit for seamless interaction
+### 💬 Communication Channels
+- **Web UI**: Streamlit app for chat and appointment booking
+- **Email & SMS**: Send chat summaries and meeting invites
 
-### 🗄️ **Data Management**
-- **PostgreSQL Database** with comprehensive business schema
-- **Azure Blob Storage** for conversation persistence
+### 🗄️ Data Management
+- **Azure PostgreSQL**: Business data
+- **Azure Blob Storage**: Conversation persistence (optional)
 
-### 🔧 **AI & LLM Support**
-- **OpenAI GPT-4** for production-grade responses
-- **Ollama Local Models** for privacy-focused deployments
-- **Automatic Fallback** between LLM providers
+### 🤖 AI & LLM Support
+- **OpenAI GPT-4** (production)
+- **Ollama Local Models** (privacy/local)
+- **Groq** (fast inference)
+- **Automatic fallback** between providers
+
+---
+
 
 ## 🏗️ Project Structure
 
 ```
 genai_chatbot/
 ├── app/
-│   ├── chatbot/
-│   │   └── customer_service_bot.py  # Customer service logic
-│   ├── models/
-│   │   ├── database_models.py  # SQLAlchemy models
-│   │   └── pydantic_models.py  # API validation models
-│   ├── services/
-│   │   ├── email_service.py   # Email with conversation content
-│   │   └── storage.py         # Azure Blob & local storage
-│   ├── database.py            # Database configuration
-├── sql_scripts/
-│   ├── create_tables.sql      # Database schema
-│   └── sample_data.sql        # Sample data
-├── venv312/                   # Python 3.12 virtual environment
-├── streamlit_customer_service.py  # Enhanced UI with formatting
-├── test_*.py                 # Test suites
-├── requirements.txt          # Dependencies
-├── .env                     # Environment configuration
-└── README.md               # This file
+│   ├── api/                 # FastAPI endpoints (customers, products, sales, activities, marketing, etc.)
+│   ├── chatbot/             # Agent logic, multi-step reasoning
+│   ├── models/              # SQLAlchemy & Pydantic models
+│   ├── services/            # Email, storage, messaging
+│   └── database.py          # DB config
+├── sql_scripts/             # DB schema & sample data
+├── streamlit_app.py         # Main Streamlit UI (chat, scheduling)
+├── requirements.txt         # Python dependencies
+├── .env.example             # Example config (no secrets)
+├── credentials.example.json # Example Google OAuth config
+├── SECRETS_SETUP_GUIDE.md   # How to set up credentials (see below)
+├── MULTISTEP_FUNCTION_CALLING.md # Multi-step agent architecture
+├── FUNCTION_CALLS_IMPLEMENTATION.md # Function-call design
+├── test_*.py                # Test scripts
+└── README.md                # This file
 ```
+
+---
+
 
 ## 🚀 Quick Start
 
-### 📋 **Prerequisites**
 
+### 📋 Prerequisites
 - **Python 3.12+**
-- **PostgreSQL Database** (Azure PostgreSQL recommended)
-- **Azure Blob Storage** (optional, local fallback available)
-- **OpenAI API Key** or **Ollama** for local LLM
+- **PostgreSQL Database** (Azure recommended)
+- **OpenAI API Key** or **Ollama** (local LLM)
+- **Google Cloud Project** (for calendar integration)
+- **Azure AD App Registration** (for Teams integration)
+- **Gmail App Password** (for email)
 
 ### 1️⃣ **Clone & Environment Setup**
 
@@ -79,57 +99,14 @@ pip install -r requirements.txt
 
 ```
 
-### 3️⃣ **Environment Configuration**
 
-Create/edit `.env` file:
+### 3️⃣ Environment Configuration
 
-```env
-# 🗄️ Database Configuration
-DB_HOST=your-postgres-server.postgres.database.azure.com
-DB_PORT=5432
-DB_NAME=mycrm
-DB_USER=your_username
-DB_PASSWORD=your_password
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
+1. **Copy** `.env.example` to `.env` and fill in your real credentials.
+2. **Copy** `credentials.example.json` to `credentials.json` and set up Google OAuth (see [Secrets Setup Guide](SECRETS_SETUP_GUIDE.md)).
+3. **Never commit `.env` or `credentials.json` to git!**
 
-# 🤖 LLM Configuration
-# Option 1: OpenAI (Recommended)
-OPENAI_API_KEY=sk-your-openai-api-key
-LLM_PROVIDER=openai
-OPENAI_MODEL=gpt-4o
-
-# Option 2: Ollama (Local)
-OLLAMA_BASE_URL=http://localhost:11434
-LLM_PROVIDER=ollama
-
-# Option 3: Groq (Fast inference)
-GROQ_API_KEY=your_groq_api_key
-
-# ☁️ Azure Storage (Optional - local fallback available)
-AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=...
-AZURE_STORAGE_CONTAINER_NAME=chatbot-sessions
-
-# 📧 Email Configuration (Gmail recommended)
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=your_email@gmail.com
-SMTP_PASSWORD=your_gmail_app_password  # No spaces!
-FROM_EMAIL=your_email@gmail.com
-
-# 📱 WhatsApp/SMS Configuration (Twilio)
-TWILIO_ACCOUNT_SID=your_twilio_account_sid
-TWILIO_AUTH_TOKEN=your_twilio_auth_token
-TWILIO_PHONE_NUMBER=your_twilio_phone
-TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886  # Sandbox
-
-# 🔍 External Search
-TAVILY_API_KEY=your_tavily_api_key
-
-# 🏢 Application Settings
-COMPANY_NAME=Contoso
-APP_HOST=127.0.0.1
-APP_PORT=8000
-```
+See `.env.example` for all required fields.
 
 ### 4️⃣ **Launch Application**
 
@@ -141,7 +118,26 @@ APP_PORT=8000
 streamlit run streamlit_customer_service.py
 ```
 
-## 🔧 Detailed Setup Instructions
+
+---
+
+## 🧑‍💻 Main User Flows
+
+### 1. Product & Customer Queries
+- Use the Streamlit app to chat with the AI about products, customers, sales, and analytics.
+- Multi-step reasoning: The agent chains function calls for deep-dive answers ([see details](MULTISTEP_FUNCTION_CALLING.md)).
+
+### 2. Marketing Appointment Booking
+- Book meetings with marketing staff via chat or UI.
+- Select marketing person by expertise; phone number included in invite.
+- Handles timezones and real calendar integration (Google/Teams).
+
+### 3. Secure Onboarding & Secrets Management
+- All secrets are managed via `.env` and `credentials.json` (see [Secrets Setup Guide](SECRETS_SETUP_GUIDE.md)).
+- Example config files provided: `.env.example`, `credentials.example.json`.
+- `.gitignore` is pre-configured to exclude all sensitive files.
+
+---
 
 ### 🤖 **LLM Provider Setup**
 
@@ -183,17 +179,26 @@ SMTP_PASSWORD=abcdefghijklmnop  # 16-char app password, no spaces!
 FROM_EMAIL=your_gmail@gmail.com
 ```
 
-## 🔧 Configuration Options
 
-### **LLM Provider Switching**
-```env
-# Switch between providers easily
-LLM_PROVIDER=openai    # Production
-LLM_PROVIDER=ollama    # Privacy/Local
-```
+## � Security & Onboarding
 
-### **Code Standards**
+- **Never commit real secrets to git.**
+- Use `.env.example` and `credentials.example.json` as templates.
+- Follow [SECRETS_SETUP_GUIDE.md](SECRETS_SETUP_GUIDE.md) for step-by-step credential setup (Google, Teams, Azure, Gmail, Twilio, etc).
+- Rotate credentials regularly and use strong passwords/API keys.
+
+---
+
+## 📚 Further Documentation
+
+- [SECRETS_SETUP_GUIDE.md](SECRETS_SETUP_GUIDE.md): How to set up all credentials and secrets
+- [MULTISTEP_FUNCTION_CALLING.md](MULTISTEP_FUNCTION_CALLING.md): Multi-step agent architecture
+- [FUNCTION_CALLS_IMPLEMENTATION.md](FUNCTION_CALLS_IMPLEMENTATION.md): Function-call based design
+
+---
+
+## 🛡️ Code Standards
 - Follow PEP 8 Python style guide
 - Add docstrings to all functions
 - Include tests for new features
-- Update README for new configurations
+- Update README and example configs for new features
