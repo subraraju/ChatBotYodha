@@ -84,7 +84,18 @@ class MockCalendarAdapter(CalendarAdapter):
             print(f"❌ Error retrieving busy times for {email}: {e}")
             return []
         
-    def book_meeting(self, email: str, start: datetime, end: datetime, subject: str, attendees: List[str]) -> Optional[str]:
+    def book_meeting(
+        self, 
+        email: str, 
+        start: datetime, 
+        end: datetime, 
+        subject: str, 
+        attendees: List[str],
+        user_name: str = None,
+        user_email: str = None,
+        marketing_person_email: str = None,
+        marketing_person_name: str = None
+    ) -> Optional[str]:
         """
         Book a real meeting using Google Calendar API
         
@@ -94,6 +105,10 @@ class MockCalendarAdapter(CalendarAdapter):
             end: Meeting end time (timezone-aware)
             subject: Meeting subject/title
             attendees: List of attendee email addresses
+            user_name: Customer/requester name
+            user_email: Customer/requester email
+            marketing_person_email: Marketing professional's email
+            marketing_person_name: Marketing professional's name
             
         Returns:
             Event ID if successful, None if failed
@@ -101,7 +116,17 @@ class MockCalendarAdapter(CalendarAdapter):
         try:
             # Use the enhanced adapter if available
             if self.enhanced_adapter:
-                event_id = self.enhanced_adapter.book_meeting(email, start, end, subject, attendees)
+                event_id = self.enhanced_adapter.book_meeting(
+                    email=email, 
+                    start=start, 
+                    end=end, 
+                    subject=subject, 
+                    attendees=attendees,
+                    user_name=user_name,
+                    user_email=user_email,
+                    marketing_person_email=marketing_person_email,
+                    marketing_person_name=marketing_person_name
+                )
                 if event_id:
                     print(f"✅ Real meeting booked via Teams integration: '{subject}' from {start} to {end}")
                     return event_id
@@ -356,8 +381,24 @@ class MarketingScheduler:
         
         return suggested_slots[:target_slots]
 
-    def book_slot(self, marketer_email: str, start: datetime, end: datetime, subject: str, attendees: List[str]) -> Optional[str]:
-        return self.calendar.book_meeting(marketer_email, start, end, subject, attendees)
+    def book_slot(
+        self, 
+        marketer_email: str, 
+        start: datetime, 
+        end: datetime, 
+        subject: str, 
+        attendees: List[str],
+        user_name: str = None,
+        user_email: str = None,
+        marketing_person_name: str = None
+    ) -> Optional[str]:
+        return self.calendar.book_meeting(
+            marketer_email, start, end, subject, attendees,
+            user_name=user_name,
+            user_email=user_email,
+            marketing_person_email=marketer_email,
+            marketing_person_name=marketing_person_name
+        )
 
     def book_meeting(self, user_email: str, marketer_email: str, selected_slot_index: int, attempts: int = 0) -> Optional[str]:
         """

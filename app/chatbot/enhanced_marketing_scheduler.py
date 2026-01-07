@@ -16,14 +16,17 @@ sys.path.insert(0, parent_dir)
 
 # Import the modules
 try:
-    from app.api.marketing_persons import MarketingPersonsAPI, get_marketing_persons_list, get_marketing_person_info_by_selection
+    from app.api.marketing_persons import MarketingPersonsAPI, get_marketing_persons_list, get_marketing_person_info_by_selection, get_customer_name_by_email, get_customer_phone_by_email
     from app.chatbot.marketing_scheduler import MarketingScheduler
+    from app.services.messaging import WhatsAppService
 except ImportError:
     # Fallback imports for direct execution
     sys.path.insert(0, os.path.join(parent_dir, 'app', 'api'))
     sys.path.insert(0, os.path.join(parent_dir, 'app', 'chatbot'))
-    from marketing_persons import MarketingPersonsAPI, get_marketing_persons_list, get_marketing_person_info_by_selection
+    sys.path.insert(0, os.path.join(parent_dir, 'app', 'services'))
+    from marketing_persons import MarketingPersonsAPI, get_marketing_persons_list, get_marketing_person_info_by_selection, get_customer_name_by_email, get_customer_phone_by_email
     from marketing_scheduler import MarketingScheduler
+    from messaging import WhatsAppService
 
 class EnhancedMarketingScheduler:
     """Enhanced scheduler with marketing person selection"""
@@ -32,6 +35,15 @@ class EnhancedMarketingScheduler:
         self.marketing_api = MarketingPersonsAPI()
         self.scheduler = MarketingScheduler()
         self.current_session = {}  # Store session state
+        
+        # Initialize WhatsApp service
+        try:
+            self.whatsapp_service = WhatsAppService()
+            self.whatsapp_enabled = True
+        except Exception as e:
+            self.whatsapp_service = None
+            self.whatsapp_enabled = False
+            print(f"⚠️ WhatsApp service not available: {e}")
     
     def start_meeting_request(self, user_email: str) -> Dict:
         """
@@ -216,15 +228,27 @@ class EnhancedMarketingScheduler:
             start_time = datetime.fromisoformat(selected_slot_data[0])
             end_time = datetime.fromisoformat(selected_slot_data[1])
             
-            # Book the meeting
-            print(f"📅 Booking meeting with {marketing_name} for {user_email}...")
+            # Look up customer name from database
+            customer_name = get_customer_name_by_email(user_email)
+            if not customer_name:
+                # Extract name from email as fallback (e.g., "john.doe@email.com" -> "John Doe")
+                email_prefix = user_email.split('@')[0] if user_email else "Customer"
+                customer_name = email_prefix.replace('.', ' ').replace('_', ' ').title()
+                print(f"⚠️ Using derived name from email: {customer_name}")
+            
+            # Book the meeting with customer name
+            print(f"📅 Booking meeting with {marketing_name} for {customer_name} ({user_email})...")
             
             event_id = self.scheduler.calendar.book_meeting(
                 email=marketing_email,
                 start=start_time,
                 end=end_time,
-                subject=f"Meeting with {user_email}",
-                attendees=[user_email, marketing_email]
+                subject=f"Meeting with {customer_name}",
+                attendees=[user_email, marketing_email],
+                user_name=customer_name,
+                user_email=user_email,
+                marketing_person_email=marketing_email,
+                marketing_person_name=marketing_name
             )
             
             if event_id:
@@ -246,6 +270,39 @@ class EnhancedMarketingScheduler:
                 confirmation_msg += f"• {marketing_name} will send meeting connection details\n"
                 confirmation_msg += f"• Check your email 15 minutes before the meeting\n\n"
                 
+                # Send WhatsApp confirmation
+                whatsapp_sent = False
+                whatsapp_error = None
+                if self.whatsapp_enabled and self.whatsapp_service:
+                    try:
+                        # Get customer phone from database
+                        customer_phone = get_customer_phone_by_email(user_email)
+                        
+                        if customer_phone:
+                            print(f"📱 Sending WhatsApp confirmation to {customer_phone}...")
+                            whatsapp_sid = self.whatsapp_service.send_meeting_confirmation(
+                                recipient_phone=customer_phone,
+                                customer_name=customer_name,
+                                marketing_person_name=marketing_name,
+                                marketing_person_email=marketing_email,
+                                meeting_date=f"{day_name}, {date_str}",
+                                meeting_time=time_str,
+                                meeting_end_time=end_time_str,
+                                timezone=timezone_str
+                            )
+                            
+                            if whatsapp_sid:
+                                whatsapp_sent = True
+                                print(f"✅ WhatsApp confirmation sent! SID: {whatsapp_sid}")
+                                confirmation_msg += f"📱 **WhatsApp notification sent to your phone!**\n\n"
+                            else:
+                                print("⚠️ WhatsApp message could not be sent")
+                        else:
+                            print(f"⚠️ No phone number found for {user_email}, skipping WhatsApp notification")
+                    except Exception as e:
+                        whatsapp_error = str(e)
+                        print(f"❌ Error sending WhatsApp notification: {e}")
+                
                 confirmation_msg += f"❓ **Questions?** Reply to the calendar invitation or contact {marketing_name} directly.\n\n"
                 confirmation_msg += f"Thank you for choosing our service! 🙏"
                 
@@ -257,6 +314,8 @@ class EnhancedMarketingScheduler:
                     'message': confirmation_msg,
                     'step': 'booking_confirmed',
                     'event_id': event_id,
+                    'whatsapp_sent': whatsapp_sent,
+                    'whatsapp_error': whatsapp_error,
                     'meeting_details': {
                         'marketing_person': marketing_name,
                         'email': marketing_email,

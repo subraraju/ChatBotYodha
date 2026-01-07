@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, String, DateTime, Date, Text, ForeignKey, Numeric
+from sqlalchemy import Integer, BigInteger, String, DateTime, Date, Text, ForeignKey, Numeric
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -16,15 +16,21 @@ class Customer(Base):
     customer_id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True
     )
-    first_name: Mapped[str] = mapped_column(String(100))
-    last_name: Mapped[str] = mapped_column(String(100))
-    email: Mapped[str] = mapped_column(String(200))
-    phone: Mapped[Optional[str]] = mapped_column(String(20))
-    address: Mapped[Optional[str]] = mapped_column(String(500))
+    party_type: Mapped[Optional[str]] = mapped_column(String(50))  # 'Individual', 'Business', 'MKTG'
+    first_name: Mapped[Optional[str]] = mapped_column(String(100))
+    last_name: Mapped[Optional[str]] = mapped_column(String(100))
+    middle_name: Mapped[Optional[str]] = mapped_column(String(100))
+    email: Mapped[Optional[str]] = mapped_column(String(200))
+    phone: Mapped[Optional[str]] = mapped_column(String(50))
+    addr1: Mapped[Optional[str]] = mapped_column(String(500))
+    addr2: Mapped[Optional[str]] = mapped_column(String(500))
     city: Mapped[Optional[str]] = mapped_column(String(100))
     state: Mapped[Optional[str]] = mapped_column(String(50))
-    zip_code: Mapped[Optional[str]] = mapped_column(String(10))
-    registration_date: Mapped[datetime] = mapped_column(
+    zipcode: Mapped[Optional[str]] = mapped_column(String(20))
+    country: Mapped[Optional[str]] = mapped_column(String(100))
+    comments: Mapped[Optional[str]] = mapped_column(String(500))
+    telegram_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger)  # Telegram chat ID for notifications
+    created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, default=func.current_timestamp()
     )
 

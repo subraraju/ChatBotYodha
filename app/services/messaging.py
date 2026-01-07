@@ -166,6 +166,204 @@ Thank you for contacting Contoso! 🚀"""
 
         return self.send_whatsapp_notification(recipient_phone, message_text)
 
+    def send_meeting_confirmation_whatsapp(
+        self, 
+        recipient_phone: str, 
+        customer_name: str,
+        marketing_person_name: str,
+        marketing_person_email: str,
+        meeting_date: str,
+        meeting_time: str,
+        meeting_end_time: str,
+        timezone: str = "IST"
+    ):
+        """
+        Send WhatsApp notification for meeting confirmation.
+        
+        Args:
+            recipient_phone: Customer's phone number (with or without whatsapp: prefix)
+            customer_name: Customer's name
+            marketing_person_name: Name of the marketing person
+            marketing_person_email: Email of the marketing person
+            meeting_date: Meeting date (e.g., "Monday, December 16, 2024")
+            meeting_time: Meeting start time (e.g., "10:00 AM")
+            meeting_end_time: Meeting end time (e.g., "11:00 AM")
+            timezone: Timezone string (e.g., "IST", "EST")
+            
+        Returns:
+            Message SID if successful, None otherwise
+        """
+        message_text = f"""🎉 *Meeting Confirmed!*
+
+Hi {customer_name}! 👋
+
+Your meeting has been successfully scheduled. Here are the details:
+
+📅 *Date:* {meeting_date}
+🕐 *Time:* {meeting_time} - {meeting_end_time} {timezone}
+👤 *With:* {marketing_person_name}
+📧 *Contact:* {marketing_person_email}
+
+📧 *What's Next:*
+• A calendar invitation has been sent to your email
+• Meeting connection details will be shared by {marketing_person_name}
+• Please check your email 15 minutes before the meeting
+
+❓ *Need to reschedule?*
+Reply to the calendar invitation or contact {marketing_person_name} directly.
+
+Thank you for choosing our service! 🙏"""
+
+        return self.send_whatsapp_notification(recipient_phone, message_text)
+
+
+class WhatsAppService:
+    """Dedicated WhatsApp messaging service using Twilio"""
+    
+    def __init__(self):
+        # Support both TWILIO_ACCOUNT_SID and TWILIO_SID (prefer non-placeholder)
+        account_sid_1 = os.getenv("TWILIO_ACCOUNT_SID", "")
+        account_sid_2 = os.getenv("TWILIO_SID", "")
+        
+        # Prefer TWILIO_SID if TWILIO_ACCOUNT_SID is a placeholder
+        if account_sid_1 and 'your_' not in account_sid_1.lower():
+            self.account_sid = account_sid_1
+        elif account_sid_2:
+            self.account_sid = account_sid_2
+        else:
+            self.account_sid = account_sid_1  # Will fail validation below
+        
+        self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        self.whatsapp_number = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
+        
+        # Only require account_sid and auth_token for WhatsApp
+        if not self.account_sid or not self.auth_token:
+            raise ValueError("Twilio credentials (TWILIO_ACCOUNT_SID/TWILIO_SID, TWILIO_AUTH_TOKEN) not found in environment variables")
+        
+        # Check for placeholder values
+        if 'your_' in self.account_sid.lower() or self.account_sid == 'your_twilio_account_sid':
+            raise ValueError("TWILIO_ACCOUNT_SID appears to be a placeholder. Please set real credentials.")
+        
+        self.client = Client(self.account_sid, self.auth_token)
+        self.is_configured = True
+        print(f"✅ WhatsApp service initialized with number: {self.whatsapp_number}")
+    
+    def send_message(self, recipient_phone: str, message_text: str) -> str:
+        """
+        Send a WhatsApp message.
+        
+        Args:
+            recipient_phone: Phone number (with or without whatsapp: prefix)
+            message_text: Message content
+            
+        Returns:
+            Message SID if successful, None otherwise
+        """
+        # Ensure recipient number has whatsapp: prefix
+        if not recipient_phone.startswith("whatsapp:"):
+            recipient_phone = f"whatsapp:{recipient_phone}"
+        
+        # Ensure from number has whatsapp: prefix
+        from_number = self.whatsapp_number
+        if not from_number.startswith("whatsapp:"):
+            from_number = f"whatsapp:{from_number}"
+        
+        try:
+            message = self.client.messages.create(
+                body=message_text,
+                from_=from_number,
+                to=recipient_phone
+            )
+            print(f"✅ WhatsApp message sent! SID: {message.sid}")
+            return message.sid
+        except Exception as e:
+            print(f"❌ Error sending WhatsApp message: {e}")
+            return None
+    
+    def send_meeting_confirmation(
+        self, 
+        recipient_phone: str, 
+        customer_name: str,
+        marketing_person_name: str,
+        marketing_person_email: str,
+        meeting_date: str,
+        meeting_time: str,
+        meeting_end_time: str,
+        timezone: str = "IST"
+    ) -> str:
+        """
+        Send WhatsApp meeting confirmation.
+        
+        Returns:
+            Message SID if successful, None otherwise
+        """
+        message_text = f"""🎉 *Meeting Confirmed!*
+
+Hi {customer_name}! 👋
+
+Your meeting has been successfully scheduled. Here are the details:
+
+📅 *Date:* {meeting_date}
+🕐 *Time:* {meeting_time} - {meeting_end_time} {timezone}
+👤 *With:* {marketing_person_name}
+📧 *Contact:* {marketing_person_email}
+
+📧 *What's Next:*
+• A calendar invitation has been sent to your email
+• Meeting connection details will be shared by {marketing_person_name}
+• Please check your email 15 minutes before the meeting
+
+❓ *Need to reschedule?*
+Reply to the calendar invitation or contact {marketing_person_name} directly.
+
+Thank you for choosing our service! 🙏"""
+
+        return self.send_message(recipient_phone, message_text)
+    
+    def send_custom_notification(self, recipient_phone: str, title: str, body: str) -> str:
+        """Send a custom WhatsApp notification"""
+        message_text = f"""🔔 *{title}*
+
+{body}"""
+        return self.send_message(recipient_phone, message_text)
+
+    def send_meeting_notification_to_marketing(
+        self, 
+        recipient_phone: str, 
+        marketing_person_name: str,
+        customer_name: str,
+        customer_email: str,
+        meeting_date: str,
+        meeting_time: str,
+        meeting_end_time: str,
+        timezone: str = "IST"
+    ) -> str:
+        """
+        Send WhatsApp notification to marketing person about a new meeting.
+        
+        Returns:
+            Message SID if successful, None otherwise
+        """
+        message_text = f"""📅 *New Meeting Scheduled!*
+
+Hi {marketing_person_name}! 👋
+
+You have a new meeting request. Here are the details:
+
+📅 *Date:* {meeting_date}
+🕐 *Time:* {meeting_time} - {meeting_end_time} {timezone}
+👤 *Customer:* {customer_name}
+📧 *Email:* {customer_email}
+
+📋 *Action Required:*
+• Check your calendar for the meeting invitation
+• Prepare for the meeting
+• Contact the customer if needed: {customer_email}
+
+Have a great meeting! 🚀"""
+
+        return self.send_message(recipient_phone, message_text)
+
 
 class TelegramService:
     """Service for sending Telegram notifications"""
@@ -204,23 +402,31 @@ class TelegramService:
             return False
     
     def send_message_sync(self, chat_id: str, message: str):
-        """Synchronous wrapper for sending Telegram messages"""
+        """Synchronous wrapper for sending Telegram messages
+        
+        Creates a fresh bot instance for each call to avoid event loop issues
+        when called multiple times from synchronous code.
+        """
         if not self.is_configured:
             print("⚠️ Telegram service not configured")
             return False
         
         try:
             import asyncio
-            import telegram
+            from telegram import Bot
             
             async def _send():
-                await self.send_message(chat_id, message)
+                # Create fresh bot instance for each call to avoid closed loop issues
+                bot = Bot(token=self.bot_token)
+                async with bot:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode="MarkdownV2"
+                    )
             
-            # Run in async context
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(_send())
-            loop.close()
+            # Use asyncio.run() which properly manages the event loop lifecycle
+            asyncio.run(_send())
             return True
         except Exception as e:
             print(f"❌ Error sending Telegram message: {e}")
@@ -246,6 +452,114 @@ If you don't see the email, please check your spam folder\\.
 Thank you for contacting Contoso\\! 🚀"""
 
         return self.send_message_sync(chat_id, message_text)
+
+    def send_meeting_confirmation(
+        self,
+        chat_id: int,
+        customer_name: str,
+        marketing_person_name: str,
+        marketing_person_email: str,
+        meeting_date: str,
+        meeting_time: str,
+        meeting_end_time: str,
+        timezone: str = "IST"
+    ) -> bool:
+        """
+        Send Telegram meeting confirmation to customer.
+        
+        Args:
+            chat_id: Telegram chat ID (integer)
+            customer_name: Customer's name
+            marketing_person_name: Name of the professional
+            marketing_person_email: Email of the professional
+            meeting_date: Meeting date string
+            meeting_time: Meeting start time
+            meeting_end_time: Meeting end time
+            timezone: Timezone string
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        # Escape special characters for Telegram MarkdownV2
+        message_text = f"""🎉 *Meeting Confirmed\\!*
+
+Hi {self._escape_markdown(customer_name)}\\! 👋
+
+Your meeting has been successfully scheduled\\.
+
+📅 *Date:* {self._escape_markdown(meeting_date)}
+🕐 *Time:* {self._escape_markdown(meeting_time)} \\- {self._escape_markdown(meeting_end_time)} {self._escape_markdown(timezone)}
+👤 *With:* {self._escape_markdown(marketing_person_name)}
+📧 *Contact:* {self._escape_markdown(marketing_person_email)}
+
+📧 *What's Next:*
+• Calendar invitation sent to your email
+• Meeting details shared by {self._escape_markdown(marketing_person_name)}
+• Check email 15 minutes before meeting
+
+❓ *Need to reschedule?*
+Reply to calendar invitation or contact {self._escape_markdown(marketing_person_name)} directly\\.
+
+Thank you for choosing our service\\! 🙏"""
+
+        return self.send_message_sync(str(chat_id), message_text)
+
+    def send_meeting_notification_to_professional(
+        self,
+        chat_id: int,
+        professional_name: str,
+        customer_name: str,
+        customer_email: str,
+        meeting_date: str,
+        meeting_time: str,
+        meeting_end_time: str,
+        timezone: str = "IST"
+    ) -> bool:
+        """
+        Send Telegram meeting notification to marketing/business professional.
+        
+        Args:
+            chat_id: Telegram chat ID (integer)
+            professional_name: Professional's name
+            customer_name: Customer's name
+            customer_email: Customer's email
+            meeting_date: Meeting date string
+            meeting_time: Meeting start time
+            meeting_end_time: Meeting end time
+            timezone: Timezone string
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        message_text = f"""📅 *New Meeting Scheduled\\!*
+
+Hi {self._escape_markdown(professional_name)}\\! 👋
+
+You have a new meeting scheduled\\.
+
+📅 *Date:* {self._escape_markdown(meeting_date)}
+🕐 *Time:* {self._escape_markdown(meeting_time)} \\- {self._escape_markdown(meeting_end_time)} {self._escape_markdown(timezone)}
+👤 *Customer:* {self._escape_markdown(customer_name)}
+📧 *Email:* {self._escape_markdown(customer_email)}
+
+📋 *Action Required:*
+• Check your calendar for invitation
+• Prepare for the meeting
+• Contact customer if needed
+
+Have a great meeting\\! 🚀"""
+
+        return self.send_message_sync(str(chat_id), message_text)
+
+    def _escape_markdown(self, text: str) -> str:
+        """Escape special characters for Telegram MarkdownV2"""
+        if not text:
+            return ""
+        # Characters that need escaping in MarkdownV2
+        special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = text.replace(char, f'\\{char}')
+        return text
 
 
 class MessageFormatter:
@@ -311,3 +625,9 @@ try:
 except Exception as e:
     telegram_service = None
     print(f"Telegram service initialization failed: {e}")
+
+try:
+    whatsapp_service = WhatsAppService()
+except Exception as e:
+    whatsapp_service = None
+    print(f"WhatsApp service initialization skipped: {e}")

@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from enum import Enum
 from dotenv import load_dotenv
 from app.chatbot.marketing_scheduler import MarketingScheduler
+from app.api.marketing_persons import get_customer_name_by_email, get_marketing_persons_list, get_marketing_person_info_by_selection, detect_party_type_from_message
 
 load_dotenv()
 
@@ -1468,21 +1469,64 @@ Please respond naturally to their message while keeping this context in mind. Us
             return f"Thank you for using {COMPANY_NAME} customer service. Have a great day!", False
     
     def _is_marketing_request(self, message: str) -> bool:
-        """Detect if the user wants to schedule a meeting with marketing."""
+        """Detect if the user wants to schedule a meeting with any professional."""
+        return self._detect_professional_request(message) is not None
+    
+    def _detect_professional_request(self, message: str) -> Optional[str]:
+        """
+        Detect if the user wants to schedule a meeting and return the party_type.
+        
+        Returns:
+            'MKTG' for marketing requests
+            'Business' for business professional requests
+            'Individual' for individual requests
+            None if no professional request detected
+        """
         message_lower = message.lower()
-        triggers = [
+        
+        # Marketing triggers
+        marketing_triggers = [
             'connect to marketing', 'contact marketing', 'speak to marketing', 'talk to marketing',
             'schedule.*marketing', 'meeting with marketing', 'connect me with marketing', 'marketing person',
-            'connect to the marketing', 'speak with marketing', 'i want to schedule a meeting with marketing'
+            'connect to the marketing', 'speak with marketing', 'i want to schedule a meeting with marketing',
+            'marketing professional', 'marketing team'
         ]
-        for t in triggers:
+        for t in marketing_triggers:
             try:
                 if re.search(t, message_lower):
-                    return True
+                    return 'MKTG'
             except re.error:
                 if t in message_lower:
-                    return True
-        return False
+                    return 'MKTG'
+        
+        # Business triggers
+        business_triggers = [
+            'connect to business', 'contact business', 'speak to business', 'talk to business',
+            'schedule.*business', 'meeting with business', 'connect me with business', 'business person',
+            'business professional', 'business team', 'enterprise', 'corporate'
+        ]
+        for t in business_triggers:
+            try:
+                if re.search(t, message_lower):
+                    return 'Business'
+            except re.error:
+                if t in message_lower:
+                    return 'Business'
+        
+        # Individual triggers
+        individual_triggers = [
+            'connect to individual', 'contact individual', 'speak to individual',
+            'schedule.*individual', 'meeting with individual', 'individual person'
+        ]
+        for t in individual_triggers:
+            try:
+                if re.search(t, message_lower):
+                    return 'Individual'
+            except re.error:
+                if t in message_lower:
+                    return 'Individual'
+        
+        return None
 
     def _confirm_marketer_email_prompt(self, email: str) -> str:
         """Generate confirmation prompt for marketer email"""
@@ -1516,8 +1560,9 @@ Please respond naturally to their message while keeping this context in mind. Us
         session.messages.append(ChatMessage("user", message))
         session.updated_at = datetime.now()
         
-        # Universal check: does user want to contact marketing? This can be triggered anywhere.
-        if self._is_marketing_request(message):
+        # Universal check: does user want to contact a professional? This can be triggered anywhere.
+        detected_party_type = self._detect_professional_request(message)
+        if detected_party_type:
             # Initialize marketing flow container in session if not present
             if not hasattr(session, 'marketing_flow') or session.marketing_flow is None:
                 session.marketing_flow = {
@@ -1527,19 +1572,21 @@ Please respond naturally to their message while keeping this context in mind. Us
                     'marketer_email': None,
                     'marketing_person': None,
                     'suggested_slots': [],
-                    'booking': None
+                    'booking': None,
+                    'party_type': detected_party_type  # Store the detected party_type
                 }
+            else:
+                session.marketing_flow['party_type'] = detected_party_type
             session.customer_state = CustomerState.MARKETING_SCHEDULER
             
-            # Use the enhanced marketing person selection
+            # Use the enhanced person selection with detected party_type
             try:
-                from app.api.marketing_persons import get_marketing_persons_list
-                team_list = get_marketing_persons_list()
+                team_list = get_marketing_persons_list(party_type=detected_party_type)
                 response = team_list
             except Exception as e:
-                print(f"❌ Error loading marketing team: {e}")
+                print(f"❌ Error loading {detected_party_type} team: {e}")
                 # Fallback to old behavior if the new system isn't available
-                response = "Sure — I can help schedule a meeting with marketing. Could you provide the marketing person's email address?"
+                response = f"Sure — I can help schedule a meeting with {detected_party_type}. Could you provide the person's email address?"
                 session.marketing_flow['step'] = 'email_input'  # Fallback mode
             
             session.messages.append(ChatMessage("assistant", response))
@@ -1941,12 +1988,13 @@ Please respond naturally to their message while keeping this context in mind. Us
                 current_step = mf.get('step', 'selecting_person')
                 
                 if current_step == 'selecting_person':
-                    # User should select a marketing person by number (1, 2, 3)
+                    # User should select a person by number
                     try:
                         selection = int(message.strip())
-                        from app.api.marketing_persons import get_marketing_person_info_by_selection
+                        # Get the party_type from session (defaults to 'MKTG' for backward compatibility)
+                        party_type = mf.get('party_type', 'MKTG')
                         
-                        person_info = get_marketing_person_info_by_selection(selection)
+                        person_info = get_marketing_person_info_by_selection(selection, party_type=party_type)
                         if person_info:
                             # Store selected person info and move to user email collection
                             mf['marketing_person'] = person_info
@@ -1957,12 +2005,12 @@ Please respond naturally to their message while keeping this context in mind. Us
                             response = f"✅ Great choice! **{person_info['name']}** is our {person_info['specialization']}.\n\n"
                             response += "Now, I need **your email address** so I can add you to the calendar invite. What's your email?"
                         else:
-                            response = "❌ Invalid selection. Please choose 1, 2, or 3 from the marketing team list above."
+                            response = f"❌ Invalid selection. Please choose a valid number from the list above."
                     except ValueError:
-                        response = "❌ Please enter a valid number (1, 2, or 3) to select a marketing team member."
+                        response = "❌ Please enter a valid number to select a team member."
                     except Exception as e:
                         print(f"❌ Error in person selection: {e}")
-                        response = "❌ Sorry, there was an error processing your selection. Please try again with 1, 2, or 3."
+                        response = "❌ Sorry, there was an error processing your selection. Please try again."
                 
                 elif current_step == 'email_input':
                     # Fallback mode - original email input flow
@@ -2013,16 +2061,23 @@ Please respond naturally to their message while keeping this context in mind. Us
                         marketing_person = mf.get('marketing_person', {})
                         marketing_name = marketing_person.get('name', 'marketing team member')
                         
-                        # Generate suggestions for the current attempt
-                        attempts = mf.get('attempts', 0)
+                        # Generate initial 3 slots (attempts=0)
+                        mf['attempts'] = 0
+                        mf['all_slots'] = []  # Store all accumulated slots
+                        mf['slots_shown'] = 0  # Track how many slots have been shown
+                        
                         try:
-                            slots = self.marketing_scheduler.suggest_slots(mf['marketer_email'], attempts=attempts)
+                            slots = self.marketing_scheduler.suggest_slots(mf['marketer_email'], attempts=0)
                         except Exception as e:
                             print(f"❌ Error in suggest_slots: {e}")
                             import traceback
                             traceback.print_exc()
                             slots = []
+                        
+                        # Store initial slots
+                        mf['all_slots'] = slots
                         mf['suggested_slots'] = slots
+                        mf['slots_shown'] = len(slots)
                         session.marketing_flow = mf
 
                         if not slots:
@@ -2040,7 +2095,7 @@ Please respond naturally to their message while keeping this context in mind. Us
                                 response += f"**{i}. {day_name}, {date_str}**\n"
                                 response += f"   🕐 {time_str} - {end_time_str} {timezone_str}\n\n"
                             
-                            response += f"Please reply with the slot number you prefer (1-{len(slots)}) or say 'no' to see next week's options."
+                            response += f"Please reply with the slot number (1-{len(slots)}) or say **'more dates'** to see additional options."
                     elif message.strip().lower() in ["no", "n", "incorrect"]:
                         mf['user_email'] = None
                         mf['step'] = 'collecting_user_email'
@@ -2050,20 +2105,37 @@ Please respond naturally to their message while keeping this context in mind. Us
                         response = "Please confirm if this email is correct by saying 'yes' or 'no'."
 
                 # If in slot selection phase
-                elif current_step == 'showing_slots' and mf.get('suggested_slots') and mf.get('user_email_confirmed'):
+                elif current_step == 'showing_slots' and mf.get('user_email_confirmed'):
+                    all_slots = mf.get('all_slots', mf.get('suggested_slots', []))
+                    
+                    # Handle slot number selection
                     if message.strip().isdigit():
                         idx = int(message.strip()) - 1
-                        slots = mf['suggested_slots']
-                        if 0 <= idx < len(slots):
-                            s, e = slots[idx]
+                        if 0 <= idx < len(all_slots):
+                            s, e = all_slots[idx]
                             # Book the slot with both attendees
                             meeting_id = None
                             try:
                                 attendees = [mf['marketer_email'], mf['user_email']]
+                                
+                                # Look up customer name from database
+                                customer_name = get_customer_name_by_email(mf['user_email'])
+                                if not customer_name:
+                                    # Fallback: derive name from email
+                                    email_prefix = mf['user_email'].split('@')[0] if mf['user_email'] else "Customer"
+                                    customer_name = email_prefix.replace('.', ' ').replace('_', ' ').title()
+                                
+                                # Get marketing person name
+                                marketing_person = mf.get('marketing_person', {})
+                                marketing_person_name = marketing_person.get('name', 'Marketing Team Member')
+                                
                                 meeting_id = self.marketing_scheduler.book_slot(
                                     mf['marketer_email'], s, e,
                                     subject=f"Customer Meeting - {self.company_name}",
-                                    attendees=attendees
+                                    attendees=attendees,
+                                    user_name=customer_name,
+                                    user_email=mf['user_email'],
+                                    marketing_person_name=marketing_person_name
                                 )
                             except Exception as booking_error:
                                 print(f"Booking error: {booking_error}")
@@ -2086,7 +2158,7 @@ Please respond naturally to their message while keeping this context in mind. Us
                                 
                                 response = f"""🎉 **Meeting Confirmed!**
 
-� **When:** {day_name}, {date_str}
+📅 **When:** {day_name}, {date_str}
 🕐 **Time:** {time_str} - {end_time_str} {timezone_str}
 👤 **With:** {marketing_name}
 📧 **Email:** {mf['marketer_email']}
@@ -2104,31 +2176,62 @@ Would you like to return to your product questions or end the chat?"""
                             else:
                                 response = "I couldn't book that slot due to a scheduling error. Would you like me to suggest the next available slots? (yes/no)"
                         else:
-                            response = "Invalid slot number. Please pick 1, 2 or 3, or say 'no' to see next week's options."
+                            response = f"Invalid slot number. Please pick a number between 1 and {len(all_slots)}, or say **'more dates'** to see additional options."
 
-                    # If user declines suggested slots
-                    elif message.strip().lower() in ["no", "n", "not good", "don't like these"]:
+                    # Handle "more dates" / "show more" request - ACCUMULATE slots
+                    elif message.strip().lower() in ["more", "more dates", "show more", "more options", "other dates", "next", "more slots"]:
                         mf['attempts'] = mf.get('attempts', 0) + 1
-                        session.marketing_flow = mf
-                        if mf['attempts'] <= mf.get('max_attempts', 2):
-                            # Suggest next week's slots
+                        max_attempts = 2  # Allow up to 2 additional fetches (total 6 slots possible)
+                        
+                        if mf['attempts'] <= max_attempts:
+                            # Get more slots from next week
                             try:
-                                slots = self.marketing_scheduler.suggest_slots(mf['marketer_email'], attempts=mf['attempts'])
+                                new_slots = self.marketing_scheduler.suggest_slots(mf['marketer_email'], attempts=mf['attempts'])
                             except:
-                                slots = []
-                            mf['suggested_slots'] = slots
-                            session.marketing_flow = mf
-                            if not slots:
-                                response = "I couldn't find slots for the next week either. I can only try up to a couple weeks. Please contact marketing directly if this doesn't work."
+                                new_slots = []
+                            
+                            if new_slots:
+                                # ACCUMULATE: Add new slots to existing list
+                                current_all_slots = mf.get('all_slots', [])
+                                current_all_slots.extend(new_slots)
+                                mf['all_slots'] = current_all_slots
+                                mf['suggested_slots'] = current_all_slots
+                                session.marketing_flow = mf
+                                
+                                # Get marketing person name for display
+                                marketing_person = mf.get('marketing_person', {})
+                                marketing_name = marketing_person.get('name', 'marketing team member')
+                                
+                                # Show ALL accumulated slots (1-6)
+                                response = f"📅 **All available slots for {marketing_name}:**\n\n"
+                                for i, (s, e) in enumerate(current_all_slots, 1):
+                                    day_name = s.strftime('%A')
+                                    date_str = s.strftime('%B %d')
+                                    time_str = s.strftime('%I:%M %p')
+                                    end_time_str = e.strftime('%I:%M %p')
+                                    timezone_str = s.strftime('%Z') or 'IST'
+                                    
+                                    response += f"**{i}. {day_name}, {date_str}**\n"
+                                    response += f"   🕐 {time_str} - {end_time_str} {timezone_str}\n\n"
+                                
+                                response += f"Please pick a slot number (1-{len(current_all_slots)})"
+                                if mf['attempts'] < max_attempts:
+                                    response += " or say **'more dates'** to see even more options."
+                                else:
+                                    response += "."
                             else:
-                                response = "**Alternative slots for the following week:**\n\n"
-                                for i, (s, e) in enumerate(slots, 1):
-                                    response += f"{i}. {s.strftime('%A %Y-%m-%d %H:%M')} - {e.strftime('%H:%M')}\n"
-                                response += f"\nPlease pick a slot number (1-{len(slots)}) or say 'no' to stop."
+                                response = "I couldn't find any more available slots. Please choose from the options above or contact us directly."
                         else:
-                            response = "I've suggested slots for two weeks already. I can't propose more future weeks automatically. Please contact marketing directly if needed."
+                            response = f"I've shown all available slots for the next few weeks. Please choose from options 1-{len(all_slots)} above, or contact marketing directly if none work for you."
+
+                    # If user wants to cancel/go back
+                    elif message.strip().lower() in ["no", "n", "cancel", "back", "stop"]:
+                        mf['step'] = 'cancelled'
+                        session.marketing_flow = mf
+                        response = "No problem! Meeting scheduling cancelled. Would you like to return to your product questions?"
                     else:
-                        response = "Please pick a slot number (1-6) or say 'no' to see next week's options, or say 'back' to return to product questions."
+                        total_slots = len(all_slots)
+                        response = f"Please pick a slot number (1-{total_slots}) or say **'more dates'** to see additional options, or say 'back' to cancel."
                 else:
                     # Default prompt
                     response = "Would you like me to schedule a meeting with marketing? If so, please provide the marketing person's email address."

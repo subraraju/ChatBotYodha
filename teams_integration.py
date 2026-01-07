@@ -14,6 +14,61 @@ from urllib.parse import quote
 # Load environment variables
 load_dotenv()
 
+# WhatsApp Service for meeting notifications
+_whatsapp_service = None
+_whatsapp_enabled = False
+
+def _init_whatsapp_service():
+    """Initialize WhatsApp service (lazy loading)"""
+    global _whatsapp_service, _whatsapp_enabled
+    if _whatsapp_service is None:
+        try:
+            from app.services.messaging import WhatsAppService
+            _whatsapp_service = WhatsAppService()
+            _whatsapp_enabled = True
+        except Exception as e:
+            print(f"⚠️ WhatsApp service not available: {e}")
+            _whatsapp_enabled = False
+    return _whatsapp_service, _whatsapp_enabled
+
+def _get_customer_phone(email: str) -> Optional[str]:
+    """Get customer phone number from database"""
+    try:
+        from app.api.marketing_persons import get_customer_phone_by_email
+        return get_customer_phone_by_email(email)
+    except Exception as e:
+        print(f"⚠️ Could not fetch customer phone: {e}")
+        return None
+
+
+# Telegram Service for meeting notifications
+_telegram_service = None
+_telegram_enabled = False
+
+def _init_telegram_service():
+    """Initialize Telegram service (lazy loading)"""
+    global _telegram_service, _telegram_enabled
+    if _telegram_service is None:
+        try:
+            from app.services.messaging import TelegramService
+            _telegram_service = TelegramService()
+            _telegram_enabled = _telegram_service.is_configured
+            if _telegram_enabled:
+                print("✅ Telegram service initialized for meeting notifications")
+        except Exception as e:
+            print(f"⚠️ Telegram service not available: {e}")
+            _telegram_enabled = False
+    return _telegram_service, _telegram_enabled
+
+def _get_customer_telegram_chat_id(email: str) -> Optional[int]:
+    """Get customer Telegram chat ID from database"""
+    try:
+        from app.api.marketing_persons import get_customer_telegram_chat_id
+        return get_customer_telegram_chat_id(email)
+    except Exception as e:
+        print(f"⚠️ Could not fetch Telegram chat_id: {e}")
+        return None
+
 
 class TeamsIntegration:
     """
@@ -336,18 +391,72 @@ class EnhancedGoogleCalendarAdapter:
         except Exception:
             return "Contact via email"
     
-    def book_meeting(self, email: str, start: datetime, end: datetime, subject: str, attendees: list) -> Optional[str]:
+    def _get_marketing_person_details(self, email: str) -> dict:
+        """Get marketing person's full details by email"""
+        try:
+            from app.api.marketing_persons import MarketingPersonsAPI
+            api = MarketingPersonsAPI()
+            person = api.get_marketing_person_by_email(email)
+            if person:
+                return {
+                    "name": person.name if person.name else "Marketing Professional",
+                    "email": email,
+                    "phone": person.phone if person.phone and person.phone != "N/A" else "Contact via email"
+                }
+        except Exception:
+            pass
+        return {
+            "name": "Marketing Professional",
+            "email": email,
+            "phone": "Contact via email"
+        }
+    
+    def book_meeting(
+        self, 
+        email: str, 
+        start: datetime, 
+        end: datetime, 
+        subject: str, 
+        attendees: list, 
+        user_name: str = None, 
+        user_email: str = None,
+        company_name: str = None,
+        marketing_person_email: str = None,
+        marketing_person_name: str = None
+    ) -> Optional[str]:
         """
         Book meeting using Google Calendar with Teams integration
         This is the main interface method expected by CalendarAdapter
+        
+        Args:
+            email: Calendar owner/organizer email (Yodha system account)
+            start: Meeting start time
+            end: Meeting end time
+            subject: Meeting subject
+            attendees: List of attendee emails (marketing person + user)
+            user_name: Customer/requester name
+            user_email: Customer/requester email
+            company_name: Company name for branding
+            marketing_person_email: Marketing professional's email
+            marketing_person_name: Marketing professional's name
         """
+        # Determine user email if not provided
+        customer_email = user_email or (attendees[-1] if attendees else None)
+        
+        # Determine marketing person email if not provided (usually first attendee)
+        mktg_email = marketing_person_email or (attendees[0] if attendees else None)
+        
         return self.book_meeting_with_teams(
             email=email,
             start=start,
             end=end,
             subject=subject,
             attendees=attendees,
-            user_email=attendees[-1] if attendees else None  # Assume last attendee is user
+            user_email=customer_email,
+            user_name=user_name,
+            company_name=company_name,
+            marketing_person_email=mktg_email,
+            marketing_person_name=marketing_person_name
         )
     
     def book_meeting_with_teams(
@@ -357,18 +466,26 @@ class EnhancedGoogleCalendarAdapter:
         end: datetime,
         subject: str,
         attendees: list,
-        user_email: str = None
+        user_email: str = None,
+        user_name: str = None,
+        company_name: str = None,
+        marketing_person_email: str = None,
+        marketing_person_name: str = None
     ) -> Optional[str]:
         """
         Create a meeting with both Google Calendar event and Teams meeting
         
         Args:
-            email: Calendar owner email (nagakartheek.ds@gmail.com)
+            email: Calendar owner/organizer email (Yodha system account)
             start: Meeting start time
             end: Meeting end time
             subject: Meeting subject
             attendees: List of attendee emails
-            user_email: Customer email address
+            user_email: Customer/requester email address
+            user_name: Customer/requester name
+            company_name: Company name for branding
+            marketing_person_email: Marketing professional's email
+            marketing_person_name: Marketing professional's name
             
         Returns:
             Google Calendar event ID if successful
@@ -394,39 +511,79 @@ class EnhancedGoogleCalendarAdapter:
             # Step 2: Create Google Calendar event with Teams link
             enhanced_subject = f"{subject}" + (" (Teams Meeting)" if teams_join_url else "")
             
-            # Enhanced description with Teams link
+            # Get organizer details from environment variables (Yodha system account)
+            organizer_name = os.getenv("ORGANIZER_NAME", "Yodha Guy")
+            organizer_email = os.getenv("ORGANIZER_EMAIL", email)  # Use env var, fallback to calendar owner
+            organizer_phone = os.getenv("ORGANIZER_PHONE", "Contact via email")
+            
+            # Get marketing person details
+            mktg_email = marketing_person_email or (attendees[0] if attendees else email)
+            mktg_details = self._get_marketing_person_details(mktg_email)
+            mktg_name = marketing_person_name or mktg_details["name"]
+            
+            # Get company name from env or parameter
+            company = company_name or os.getenv("COMPANY_NAME", "Contoso")
+            
+            # Customer name fallback
+            customer_name = user_name or "Customer"
+            
+            # Build description in exact user-specified format
+            description_parts = []
+            
+            # Teams meeting info if available
             if teams_join_url:
-                description_parts = [
+                description_parts.extend([
                     f"🎥 Microsoft Teams Meeting",
                     f"📞 Join Teams Meeting: {teams_join_url}",
                     "",
                     "📞 Dial-in Information:",
-                    f"Conference ID: {teams_meeting.get('conference_id', 'Available in Teams')}"
+                    f"Conference ID: {teams_meeting.get('conference_id', 'Available in Teams')}",
                     f"Phone Number: {teams_meeting.get('phone_number', 'See Teams invitation')}",
                     "",
-                    f"Meeting scheduled via ChatBot Assistant",
-                    f"📧 Organizer: {email}",
-                    f"📞 Organizer Phone: {self._get_marketing_person_phone(email)}"
-                ]
-            else:
-                description_parts = [
-                    f"📞 Professional Meeting - {subject}",
-                    "",
-                    f"📧 Meeting Organizer: {email}",
-                    f"📞 Organizer Phone: {self._get_marketing_person_phone(email)}",
-                    f"🤖 Scheduled via: Yodha ChatBot Assistant"
-                ]
+                ])
             
+            # Meeting title with phone emoji
+            description_parts.extend([
+                f"📞 Professional Meeting - {subject}",
+                "",
+            ])
+            
+            # Organizer details
+            description_parts.extend([
+                f"📧 Meeting Organizer: {organizer_email}",
+                f"📞 Organizer Phone: {organizer_phone}",
+                f"🤖 Scheduled via: Yodha ChatBot Assistant",
+            ])
+            
+            # Requested by
             if user_email:
                 description_parts.append(f"Requested by: {user_email}")
             
-            # Add comprehensive meeting information
+            # Important notes section
             description_parts.extend([
                 "",
                 "🔔 Important Notes:",
                 "• Please confirm attendance by responding to this invitation",
-                "• For questions or changes, contact organizer directly", 
-                f"• Contact: {email}",
+                "• For questions or changes, contact organizer directly",
+                f"• Contact: {organizer_email}",
+            ])
+            
+            # Guests section
+            description_parts.extend([
+                "",
+                "Guests:",
+                f"Mktg Professional: {mktg_name}; {mktg_email}",
+            ])
+            
+            if user_email:
+                description_parts.append(f"Requester: {customer_name}; {user_email}")
+            
+            # Regards section with name and email
+            description_parts.extend([
+                "",
+                "Regards,",
+                f"{organizer_name}",
+                f"{organizer_email}",
             ])
             
             # Create enhanced event
@@ -440,7 +597,7 @@ class EnhancedGoogleCalendarAdapter:
                     'dateTime': end.isoformat(),
                     'timeZone': 'UTC', 
                 },
-                'attendees': [{'email': attendee} for attendee in attendees + ([user_email] if user_email else [])],
+                'attendees': [{'email': attendee} for attendee in list(dict.fromkeys(attendees + ([user_email] if user_email else [])))],
                 'description': "\n".join(description_parts),
                 # 'location': teams_join_url if teams_join_url else "Virtual Meeting",
                 'reminders': {
@@ -471,6 +628,130 @@ class EnhancedGoogleCalendarAdapter:
             event_id = created_event.get('id')
             print(f"✅ Created enhanced calendar event: {event_id}")
             print(f"📧 Invitations sent with Teams link to: {', '.join(attendees + ([user_email] if user_email else []))}")
+            
+            # Send WhatsApp notifications to BOTH customer and marketing person
+            try:
+                whatsapp_svc, wa_enabled = _init_whatsapp_service()
+                if wa_enabled and whatsapp_svc:
+                    # Format meeting details (shared for both messages)
+                    day_name = start.strftime('%A')
+                    date_str = start.strftime('%B %d, %Y')
+                    time_str = start.strftime('%I:%M %p')
+                    end_time_str = end.strftime('%I:%M %p')
+                    timezone_str = start.strftime('%Z') or 'IST'
+                    
+                    # 1. Send WhatsApp to CUSTOMER
+                    if user_email:
+                        customer_phone = _get_customer_phone(user_email)
+                        if customer_phone:
+                            print(f"📱 Sending WhatsApp to customer: {customer_phone}...")
+                            
+                            whatsapp_sid = whatsapp_svc.send_meeting_confirmation(
+                                recipient_phone=customer_phone,
+                                customer_name=customer_name,
+                                marketing_person_name=mktg_name,
+                                marketing_person_email=mktg_email,
+                                meeting_date=f"{day_name}, {date_str}",
+                                meeting_time=time_str,
+                                meeting_end_time=end_time_str,
+                                timezone=timezone_str
+                            )
+                            
+                            if whatsapp_sid:
+                                print(f"✅ WhatsApp sent to customer! SID: {whatsapp_sid}")
+                            else:
+                                print("⚠️ WhatsApp to customer could not be sent")
+                        else:
+                            print(f"⚠️ No phone for customer {user_email}, skipping WhatsApp")
+                    
+                    # 2. Send WhatsApp to MARKETING PERSON
+                    if mktg_email:
+                        mktg_phone = _get_customer_phone(mktg_email)
+                        if mktg_phone:
+                            print(f"📱 Sending WhatsApp to marketing person: {mktg_phone}...")
+                            
+                            mktg_whatsapp_sid = whatsapp_svc.send_meeting_notification_to_marketing(
+                                recipient_phone=mktg_phone,
+                                marketing_person_name=mktg_name,
+                                customer_name=customer_name,
+                                customer_email=user_email or "Not provided",
+                                meeting_date=f"{day_name}, {date_str}",
+                                meeting_time=time_str,
+                                meeting_end_time=end_time_str,
+                                timezone=timezone_str
+                            )
+                            
+                            if mktg_whatsapp_sid:
+                                print(f"✅ WhatsApp sent to marketing person! SID: {mktg_whatsapp_sid}")
+                            else:
+                                print("⚠️ WhatsApp to marketing person could not be sent")
+                        else:
+                            print(f"⚠️ No phone for marketing person {mktg_email}, skipping WhatsApp")
+                            
+            except Exception as wa_error:
+                print(f"⚠️ WhatsApp notification error: {wa_error}")
+            
+            # Send Telegram notifications to BOTH customer and marketing person
+            try:
+                telegram_svc, tg_enabled = _init_telegram_service()
+                if tg_enabled and telegram_svc:
+                    # Format meeting details (reuse from WhatsApp section)
+                    day_name = start.strftime('%A')
+                    date_str = start.strftime('%B %d, %Y')
+                    time_str = start.strftime('%I:%M %p')
+                    end_time_str = end.strftime('%I:%M %p')
+                    timezone_str = start.strftime('%Z') or 'IST'
+                    
+                    # 3. Send Telegram to CUSTOMER
+                    if user_email:
+                        customer_chat_id = _get_customer_telegram_chat_id(user_email)
+                        if customer_chat_id:
+                            print(f"📲 Sending Telegram to customer: {customer_chat_id}...")
+                            
+                            tg_success = telegram_svc.send_meeting_confirmation(
+                                chat_id=customer_chat_id,
+                                customer_name=customer_name,
+                                marketing_person_name=mktg_name,
+                                marketing_person_email=mktg_email,
+                                meeting_date=f"{day_name}, {date_str}",
+                                meeting_time=time_str,
+                                meeting_end_time=end_time_str,
+                                timezone=timezone_str
+                            )
+                            
+                            if tg_success:
+                                print(f"✅ Telegram sent to customer!")
+                            else:
+                                print("⚠️ Telegram to customer could not be sent")
+                        else:
+                            print(f"ℹ️ No Telegram chat_id for customer {user_email}, skipping Telegram")
+                    
+                    # 4. Send Telegram to MARKETING PERSON
+                    if mktg_email:
+                        mktg_chat_id = _get_customer_telegram_chat_id(mktg_email)
+                        if mktg_chat_id:
+                            print(f"📲 Sending Telegram to marketing person: {mktg_chat_id}...")
+                            
+                            mktg_tg_success = telegram_svc.send_meeting_notification_to_professional(
+                                chat_id=mktg_chat_id,
+                                professional_name=mktg_name,
+                                customer_name=customer_name,
+                                customer_email=user_email or "Not provided",
+                                meeting_date=f"{day_name}, {date_str}",
+                                meeting_time=time_str,
+                                meeting_end_time=end_time_str,
+                                timezone=timezone_str
+                            )
+                            
+                            if mktg_tg_success:
+                                print(f"✅ Telegram sent to marketing person!")
+                            else:
+                                print("⚠️ Telegram to marketing person could not be sent")
+                        else:
+                            print(f"ℹ️ No Telegram chat_id for marketing person {mktg_email}, skipping Telegram")
+                            
+            except Exception as tg_error:
+                print(f"⚠️ Telegram notification error: {tg_error}")
             
             return event_id
             

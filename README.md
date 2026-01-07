@@ -28,6 +28,51 @@ This repository provides a robust, secure, and extensible chatbot platform for:
 - **Web UI**: Streamlit app for chat and appointment booking
 - **Email & SMS**: Send chat summaries and meeting invites
 
+### 📬 Booking Notification Flow
+
+When a meeting is booked, notifications are sent through multiple channels:
+
+1. **Email** - Calendar invitation with full meeting details, agenda, and connection info
+2. **WhatsApp** - Instant confirmation via Twilio with meeting summary
+3. **Telegram** - Optional notification via Telegram Bot for real-time alerts
+
+```mermaid
+flowchart LR
+    Booking[Meeting Booked] --> Email[Email Invitation]
+    Booking --> WhatsApp[WhatsApp Confirmation]
+    Booking --> Telegram[Telegram Alert]
+```
+
+**Key files:**
+- [app/services/email_service.py](app/services/email_service.py) - Email + multi-channel orchestration
+- [app/services/messaging.py](app/services/messaging.py) - WhatsApp (`SMSService`, `WhatsAppService`) and Telegram (`TelegramService`) services
+
+### 📅 Google Calendar Integration
+
+The system integrates with Google Calendar API for real meeting scheduling:
+
+- **Timezone-aware event creation** - Respects organizer and attendee timezones
+- **Automatic email invitations** - Sends calendar invites to all attendees
+- **Free/busy time checking** - Checks availability before booking
+- **Teams meeting link generation** - Optional Microsoft Teams integration
+- **Professional meeting templates** - Rich descriptions with agenda and connection details
+
+**Key files:**
+- [google_calendar_integration.py](google_calendar_integration.py) - Main Google Calendar adapter with OAuth2
+- [teams_integration.py](teams_integration.py) - Enhanced adapter with Teams meeting support
+- [app/chatbot/marketing_scheduler.py](app/chatbot/marketing_scheduler.py) - Scheduler orchestration
+
+### 🔐 Notification Environment Variables
+
+| Variable | Service | Description |
+|----------|---------|-------------|
+| `TWILIO_ACCOUNT_SID` | WhatsApp | Twilio account ID |
+| `TWILIO_AUTH_TOKEN` | WhatsApp | Twilio auth token |
+| `TWILIO_WHATSAPP_NUMBER` | WhatsApp | Twilio WhatsApp sender number (e.g., `whatsapp:+14155238886`) |
+| `TELEGRAM_BOT_TOKEN` | Telegram | Telegram bot token from @BotFather |
+| `SMTP_USERNAME` | Email | Gmail address for sending emails |
+| `SMTP_PASSWORD` | Email | Gmail app password (16 characters) |
+
 ### 🗄️ Data Management
 - **Azure PostgreSQL**: Business data
 - **Azure Blob Storage**: Conversation persistence (optional)
