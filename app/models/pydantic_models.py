@@ -92,3 +92,14 @@ class ChatSession(BaseModel):
     messages: list[ChatMessage]
     created_at: datetime
     updated_at: datetime
+
+
+# Simple Chat API models for external integration
+class SimpleChatRequest(BaseModel):
+    message: str
+    customer_email: Optional[str] = None
+
+
+class SimpleChatResponse(BaseModel):
+    response: str
+    success: bool

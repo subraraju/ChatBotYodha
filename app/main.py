@@ -14,10 +14,21 @@ from app.api.tavily import router as tavily_router
 
 # Import services and models
 from app.database import get_database, create_tables
-from app.models.pydantic_models import ChatSession, ChatMessage
+from app.models.pydantic_models import ChatSession, ChatMessage, SimpleChatRequest, SimpleChatResponse
 from app.services.storage import chat_storage
 from app.services.messaging import email_service, sms_service, MessageFormatter
 from app.chatbot.agent import chatbot_agent
+from app.chatbot.customer_service_bot import CustomerServiceBot
+
+# Initialize the Customer Service Bot (Yodha)
+customer_service_bot = None
+
+def get_customer_service_bot():
+    """Get or initialize the customer service bot"""
+    global customer_service_bot
+    if customer_service_bot is None:
+        customer_service_bot = CustomerServiceBot()
+    return customer_service_bot
 
 app = FastAPI(
     title="Agentic Chatbot API",
@@ -58,7 +69,37 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now()}
 
 
-# Chat endpoints
+# Simple Chat API - stateless endpoint for external integration
+@app.post("/api/chat/simple", response_model=SimpleChatResponse)
+async def simple_chat(request: SimpleChatRequest):
+    """
+    Simple stateless chat endpoint for external integration.
+    
+    Send a message and get a response - no session management required.
+    Uses the CustomerServiceBot (Yodha) which powers the Streamlit interface.
+    
+    - **message**: The user's message/question
+    - **customer_email**: Optional customer email for personalized responses
+    """
+    try:
+        bot = get_customer_service_bot()
+        
+        # Create a new session for this request
+        session = bot.start_new_session()
+        
+        # If customer email is provided, add it to the session context
+        if request.customer_email:
+            session.customer_info['email'] = request.customer_email
+        
+        # Process the message
+        response, _ = bot.process_message(request.message, session)
+        
+        return SimpleChatResponse(response=response, success=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Session-based Chat endpoints
 @app.post("/api/chat/start")
 async def start_chat_session(customer_email: str):
     """Start a new chat session"""
