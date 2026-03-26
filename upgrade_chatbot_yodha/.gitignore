@@ -1,0 +1,41 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+
+# Data & logs
+logs/
+data/docs/*.pdf
+data/index/*.index
+data/index/*.pkl
+data/chat_sessions/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Alembic
+alembic/versions/__pycache__/
+
+# Credentials (never commit)
+credentials.json
+token.json
+*.pem

@@ -1,0 +1,55 @@
+# =============================================================================
+# ChatBotYodha — Backend Dependencies
+# =============================================================================
+
+# --- Core ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+pydantic==2.9.0
+python-dotenv==1.0.1
+
+# --- Database ---
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+alembic==1.14.0
+
+# --- LLM ---
+openai>=1.50.0
+httpx>=0.27.0
+
+# --- Embeddings & Vector Search ---
+sentence-transformers==2.7.0
+faiss-cpu==1.8.0
+numpy>=1.24,<2.0
+PyPDF2==3.0.1
+
+# --- Notifications ---
+python-telegram-bot>=21.0
+twilio==9.3.0
+
+# --- Google Calendar ---
+google-auth==2.35.0
+google-auth-oauthlib==1.2.1
+google-api-python-client==2.150.0
+
+# --- Azure Blob Storage (optional) ---
+azure-storage-blob==12.23.0
+azure-identity==1.19.0
+
+# --- Auth & Security ---
+pyjwt==2.9.0
+passlib[bcrypt]==1.7.4
+slowapi==0.1.9
+
+# --- Logging ---
+python-json-logger==2.0.7
+
+# --- Testing ---
+pytest==8.3.0
+pytest-asyncio==0.24.0
+
+# --- Utilities ---
+pytz==2024.2
+python-dateutil==2.9.0
+markdown==3.7
+jinja2==3.1.4
